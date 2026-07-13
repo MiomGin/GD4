@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace Dungeon.RoomSystem
+namespace Game.Common.Combat
 {
     /// <summary>
     /// 可以受到房间伤害的对象需要实现的接口。

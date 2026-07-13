@@ -1,4 +1,5 @@
 using UnityEngine;
+using Game.Common.Combat;
 
 namespace Dungeon.RoomSystem
 {
