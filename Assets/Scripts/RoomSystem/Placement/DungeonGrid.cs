@@ -5,86 +5,119 @@ using UnityEngine;
 namespace Dungeon.RoomSystem
 {
     /// <summary>
-    /// 管理地牢网格坐标、房间占用关系和房间创建删除。
+    /// 表示一个需要在游戏开始时自动生成的固定房间。
+    /// 常用于 Entrance、Throne 等地图基础结构。
     /// </summary>
+    [Serializable]
+    public sealed class InitialRoomPlacement
+    {
+        [SerializeField]
+        private RoomData roomData;
+
+        [SerializeField]
+        private Vector2Int anchorCell;
+
+        [SerializeField, Range(0, 3)]
+        private int rotation;
+
+        /// <summary>
+        /// 需要生成的房间配置。
+        /// </summary>
+        public RoomData RoomData => roomData;
+
+        /// <summary>
+        /// 房间摆放锚点。
+        /// </summary>
+        public Vector2Int AnchorCell => anchorCell;
+
+        /// <summary>
+        /// 房间顺时针旋转次数。
+        /// </summary>
+        public int Rotation => rotation;
+    }
+
+    /// <summary>
+    /// 管理地牢逻辑网格、房间占用关系以及房间实例的创建和删除。
+    /// 同时负责组装 RoomInstance 与 RoomVisualController。
+    /// </summary>
+    [DisallowMultipleComponent]
     public sealed class DungeonGrid : MonoBehaviour
     {
-        [Serializable]
-        private struct InitialRoom
-        {
-            public RoomData roomData;
-            public Vector2Int anchorCell;
-
-            [Range(0, 3)]
-            public int rotation;
-        }
-
-        private static readonly Vector2Int[] FourDirections =
-        {
-            Vector2Int.up,
-            Vector2Int.down,
-            Vector2Int.left,
-            Vector2Int.right
-        };
-
-        [Header("网格设置")]
+        [Header("Grid")]
 
         [SerializeField, Min(0.01f)]
         private float cellSize = 1f;
 
-        [Header("地图边界")]
-
         [SerializeField]
         private bool useBounds = true;
 
+        [Tooltip("网格允许使用的最小逻辑坐标。")]
         [SerializeField]
-        private Vector2Int minCell =
+        private Vector2Int minimumCell =
             new Vector2Int(-20, -20);
 
+        [Tooltip("网格范围的宽度和高度。")]
         [SerializeField]
-        private Vector2Int maxCell =
-            new Vector2Int(20, 20);
+        private Vector2Int gridSize =
+            new Vector2Int(40, 40);
 
-        [Header("房间表现")]
+        [Header("Room Visual")]
 
-        [Tooltip("已经放置的房间使用的单格 SpriteRenderer Prefab。")]
+        [Tooltip("正式房间单个格子的 SpriteRenderer Prefab。")]
         [SerializeField]
         private SpriteRenderer placedCellPrefab;
 
-        [Header("初始固定房间")]
-
-        [Tooltip("可配置王座室和地牢入口等初始房间。")]
+        [Tooltip("生成房间根对象的父节点。为空时使用 DungeonGrid 自身。")]
         [SerializeField]
-        private InitialRoom[] initialRooms =
-            Array.Empty<InitialRoom>();
+        private Transform roomRoot;
 
-        private readonly Dictionary<
-            Vector2Int,
-            RoomInstance
-        > occupiedCells =
-            new Dictionary<Vector2Int, RoomInstance>();
+        [Header("Initial Rooms")]
+
+        [SerializeField]
+        private List<InitialRoomPlacement> initialRooms =
+            new List<InitialRoomPlacement>();
 
         /// <summary>
-        /// 单个网格的世界空间边长。
+        /// 每个世界逻辑格当前所属的房间。
+        /// </summary>
+        private readonly Dictionary<Vector2Int, RoomInstance>
+            occupiedRooms =
+                new Dictionary<Vector2Int, RoomInstance>();
+
+        /// <summary>
+        /// 当前已经注册到网格中的全部房间。
+        /// </summary>
+        private readonly HashSet<RoomInstance> placedRooms =
+            new HashSet<RoomInstance>();
+
+        /// <summary>
+        /// 单个逻辑格子的世界尺寸。
         /// </summary>
         public float CellSize => cellSize;
 
         /// <summary>
-        /// 当前被房间占用的格子数量。
+        /// 当前已经放置的全部房间。
         /// </summary>
-        public int OccupiedCellCount =>
-            occupiedCells.Count;
+        public IReadOnlyCollection<RoomInstance> PlacedRooms =>
+            placedRooms;
+
+        private void Awake()
+        {
+            if (roomRoot == null)
+            {
+                roomRoot = transform;
+            }
+        }
 
         private void Start()
         {
-            PlaceInitialRooms();
+            CreateInitialRooms();
         }
 
         /// <summary>
-        /// 将世界坐标转换为网格坐标。
+        /// 将世界坐标转换为逻辑网格坐标。
         /// </summary>
-        public Vector2Int WorldToCell(
-            Vector3 worldPosition)
+        public Vector2Int WorldToCell(Vector3 worldPosition)
         {
             Vector3 localPosition =
                 transform.InverseTransformPoint(
@@ -102,7 +135,7 @@ namespace Dungeon.RoomSystem
         }
 
         /// <summary>
-        /// 将网格坐标转换为格子中心的世界坐标。
+        /// 将逻辑网格坐标转换为格子中心的世界坐标。
         /// </summary>
         public Vector3 CellToWorld(Vector2Int cell)
         {
@@ -119,98 +152,158 @@ namespace Dungeon.RoomSystem
         }
 
         /// <summary>
-        /// 判断指定格子当前是否已被房间占用。
+        /// 判断指定逻辑格是否已经被房间占用。
         /// </summary>
         public bool IsCellOccupied(Vector2Int cell)
         {
-            return occupiedCells.ContainsKey(cell);
+            return occupiedRooms.ContainsKey(cell);
         }
 
         /// <summary>
-        /// 获取指定格子所属的房间。
+        /// 尝试获取指定逻辑格所属的房间。
         /// </summary>
         public bool TryGetRoom(
             Vector2Int cell,
             out RoomInstance room)
         {
-            return occupiedCells.TryGetValue(
+            return occupiedRooms.TryGetValue(
                 cell,
                 out room
             );
         }
 
         /// <summary>
-        /// 检查房间能否放置，并返回旋转后的全部目标格子。
-        /// 即使放置非法，也会返回完整目标格子供虚影显示。
+        /// 获取房间在指定锚点和旋转状态下占用的世界格子。
+        /// </summary>
+        public List<Vector2Int> GetWorldCells(
+            RoomData roomData,
+            Vector2Int anchorCell,
+            int rotation)
+        {
+            List<Vector2Int> worldCells =
+                new List<Vector2Int>();
+
+            if (roomData == null)
+            {
+                return worldCells;
+            }
+
+            IReadOnlyList<Vector2Int> localCells =
+                roomData.GetRotatedCells(
+                    NormalizeRotation(rotation)
+                );
+
+            if (localCells == null)
+            {
+                return worldCells;
+            }
+
+            foreach (Vector2Int localCell in localCells)
+            {
+                worldCells.Add(
+                    anchorCell + localCell
+                );
+            }
+
+            return worldCells;
+        }
+
+        /// <summary>
+        /// 判断房间是否可以放置在指定位置。
         /// </summary>
         public bool CanPlace(
             RoomData roomData,
             Vector2Int anchorCell,
             int rotation,
-            out List<Vector2Int> targetCells,
             bool ignoreConnectionRule = false)
         {
-            targetCells =
+            List<Vector2Int> worldCells =
                 new List<Vector2Int>();
+
+            return TryGetPlacementCells(
+                roomData,
+                anchorCell,
+                rotation,
+                worldCells,
+                ignoreConnectionRule
+            );
+        }
+
+        /// <summary>
+        /// 检查房间放置条件，并输出最终占用的世界格子。
+        /// </summary>
+        public bool TryGetPlacementCells(
+            RoomData roomData,
+            Vector2Int anchorCell,
+            int rotation,
+            List<Vector2Int> worldCells,
+            bool ignoreConnectionRule = false)
+        {
+            if (worldCells == null)
+            {
+                throw new ArgumentNullException(
+                    nameof(worldCells)
+                );
+            }
+
+            worldCells.Clear();
 
             if (roomData == null)
             {
                 return false;
             }
 
-            List<Vector2Int> localCells =
-                roomData.GetRotatedCells(rotation);
-
-            foreach (Vector2Int localCell in localCells)
-            {
-                targetCells.Add(
-                    anchorCell + localCell
+            IReadOnlyList<Vector2Int> localCells =
+                roomData.GetRotatedCells(
+                    NormalizeRotation(rotation)
                 );
-            }
 
-            if (targetCells.Count == 0)
+            if (localCells == null ||
+                localCells.Count == 0)
             {
                 return false;
             }
 
-            bool valid = true;
+            HashSet<Vector2Int> candidateCells =
+                new HashSet<Vector2Int>();
 
-            HashSet<Vector2Int> targetCellSet =
-                new HashSet<Vector2Int>(
-                    targetCells
-                );
-
-            if (targetCellSet.Count !=
-                targetCells.Count)
+            foreach (Vector2Int localCell in localCells)
             {
-                valid = false;
-            }
+                Vector2Int worldCell =
+                    anchorCell + localCell;
 
-            foreach (Vector2Int cell in targetCells)
-            {
-                if (!IsInsideBounds(cell))
+                // 防止 RoomData 中存在重复坐标。
+                if (!candidateCells.Add(worldCell))
                 {
-                    valid = false;
+                    worldCells.Clear();
+                    return false;
                 }
 
-                if (occupiedCells.ContainsKey(cell))
+                if (!IsWithinBounds(worldCell))
                 {
-                    valid = false;
+                    worldCells.Clear();
+                    return false;
                 }
+
+                if (occupiedRooms.ContainsKey(worldCell))
+                {
+                    worldCells.Clear();
+                    return false;
+                }
+
+                worldCells.Add(worldCell);
             }
 
-            bool shouldCheckConnection =
-                !ignoreConnectionRule &&
-                roomData.MustConnectToExistingRoom &&
-                occupiedCells.Count > 0;
-
-            if (shouldCheckConnection &&
-                !TouchesExistingRoom(targetCellSet))
+            if (!ignoreConnectionRule &&
+                roomData.MustConnect &&
+                occupiedRooms.Count > 0 &&
+                !TouchesExistingRoom(candidateCells))
             {
-                valid = false;
+                worldCells.Clear();
+                return false;
             }
 
-            return valid;
+            return true;
         }
 
         /// <summary>
@@ -228,195 +321,331 @@ namespace Dungeon.RoomSystem
             if (placedCellPrefab == null)
             {
                 Debug.LogError(
-                    "DungeonGrid 未设置 Placed Cell Prefab。",
+                    "DungeonGrid 的 Placed Cell Prefab 未设置。",
                     this
                 );
 
                 return false;
             }
 
-            if (!CanPlace(
+            List<Vector2Int> worldCells =
+                new List<Vector2Int>();
+
+            if (!TryGetPlacementCells(
                     roomData,
                     anchorCell,
                     rotation,
-                    out List<Vector2Int> targetCells,
+                    worldCells,
                     ignoreConnectionRule))
             {
                 return false;
             }
 
             GameObject roomObject =
-                new GameObject(roomData.DisplayName);
+                new GameObject("Room");
 
             roomObject.transform.SetParent(
-                transform,
+                roomRoot,
                 false
             );
 
-            roomInstance =
+            RoomInstance runtime =
                 roomObject.AddComponent<RoomInstance>();
 
-            // 先注册占用关系，使效果初始化时已经能够查询网格。
-            foreach (Vector2Int cell in targetCells)
+            RoomVisualController visual =
+                roomObject.AddComponent<RoomVisualController>();
+
+            try
             {
-                occupiedCells.Add(
-                    cell,
-                    roomInstance
+                runtime.Initialize(
+                    roomData,
+                    anchorCell,
+                    rotation,
+                    worldCells,
+                    this
                 );
+
+                visual.Initialize(
+                    roomData,
+                    worldCells,
+                    this,
+                    placedCellPrefab
+                );
+
+                RegisterRoom(
+                    runtime,
+                    worldCells
+                );
+
+                /*
+                 * NotifyPlaced 放在网格注册之后。
+                 * 这样初始效果在 OnAdded 或 RoomPlaced 中查询网格时，
+                 * 房间已经可以被 DungeonGrid 找到。
+                 */
+                runtime.NotifyPlaced();
+
+                roomInstance = runtime;
+                return true;
             }
+            catch (Exception exception)
+            {
+                Debug.LogException(
+                    exception,
+                    roomObject
+                );
 
-            roomInstance.Initialize(
-                roomData,
-                anchorCell,
-                rotation,
-                targetCells,
-                this,
-                placedCellPrefab
-            );
+                UnregisterRoom(
+                    runtime,
+                    worldCells
+                );
 
-            roomInstance.NotifyPlaced();
+                runtime.PrepareForRemoval();
 
-            return true;
+                Destroy(roomObject);
+
+                roomInstance = null;
+                return false;
+            }
         }
 
         /// <summary>
-        /// 删除一个已经放置的房间并释放其占用格子。
+        /// TryPlaceRoom 的兼容别名。
         /// </summary>
-        public bool RemoveRoom(
-            RoomInstance roomInstance)
+        public bool TryCreateRoom(
+            RoomData roomData,
+            Vector2Int anchorCell,
+            int rotation,
+            out RoomInstance roomInstance,
+            bool ignoreConnectionRule = false)
         {
-            if (roomInstance == null)
+            return TryPlaceRoom(
+                roomData,
+                anchorCell,
+                rotation,
+                out roomInstance,
+                ignoreConnectionRule
+            );
+        }
+
+        /// <summary>
+        /// 创建房间并返回生成的实例。
+        /// 放置失败时返回 null。
+        /// </summary>
+        public RoomInstance PlaceRoom(
+            RoomData roomData,
+            Vector2Int anchorCell,
+            int rotation,
+            bool ignoreConnectionRule = false)
+        {
+            TryPlaceRoom(
+                roomData,
+                anchorCell,
+                rotation,
+                out RoomInstance roomInstance,
+                ignoreConnectionRule
+            );
+
+            return roomInstance;
+        }
+
+        /// <summary>
+        /// PlaceRoom 的兼容别名。
+        /// </summary>
+        public RoomInstance CreateRoom(
+            RoomData roomData,
+            Vector2Int anchorCell,
+            int rotation,
+            bool ignoreConnectionRule = false)
+        {
+            return PlaceRoom(
+                roomData,
+                anchorCell,
+                rotation,
+                ignoreConnectionRule
+            );
+        }
+
+        /// <summary>
+        /// 从网格中删除一个已经放置的房间。
+        /// </summary>
+        public bool RemoveRoom(RoomInstance roomInstance)
+        {
+            if (roomInstance == null ||
+                !placedRooms.Contains(roomInstance))
             {
                 return false;
             }
 
             roomInstance.PrepareForRemoval();
 
-            foreach (Vector2Int cell
-                     in roomInstance.OccupiedCells)
-            {
-                if (occupiedCells.TryGetValue(
-                        cell,
-                        out RoomInstance currentRoom) &&
-                    currentRoom == roomInstance)
-                {
-                    occupiedCells.Remove(cell);
-                }
-            }
+            UnregisterRoom(
+                roomInstance,
+                roomInstance.OccupiedCells
+            );
 
             Destroy(roomInstance.gameObject);
 
             return true;
         }
 
-        private void PlaceInitialRooms()
+        /// <summary>
+        /// 删除当前网格中的全部房间。
+        /// </summary>
+        public void ClearAllRooms()
+        {
+            RoomInstance[] snapshot =
+                new RoomInstance[placedRooms.Count];
+
+            placedRooms.CopyTo(snapshot);
+
+            foreach (RoomInstance roomInstance in snapshot)
+            {
+                if (roomInstance != null)
+                {
+                    RemoveRoom(roomInstance);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 生成 Inspector 中配置的固定初始房间。
+        /// 初始房间默认忽略连接规则。
+        /// </summary>
+        private void CreateInitialRooms()
         {
             if (initialRooms == null)
             {
                 return;
             }
 
-            foreach (InitialRoom initialRoom
+            foreach (InitialRoomPlacement placement
                      in initialRooms)
             {
-                if (initialRoom.roomData == null)
+                if (placement == null ||
+                    placement.RoomData == null)
                 {
                     continue;
                 }
 
-                bool placed = TryPlaceRoom(
-                    initialRoom.roomData,
-                    initialRoom.anchorCell,
-                    initialRoom.rotation,
-                    out _,
-                    true
-                );
+                bool created =
+                    TryPlaceRoom(
+                        placement.RoomData,
+                        placement.AnchorCell,
+                        placement.Rotation,
+                        out _,
+                        true
+                    );
 
-                if (!placed)
+                if (!created)
                 {
                     Debug.LogWarning(
-                        $"初始房间放置失败：{initialRoom.roomData.name}",
+                        $"无法生成初始房间：{placement.RoomData.name}，" +
+                        $"Anchor={placement.AnchorCell}，" +
+                        $"Rotation={placement.Rotation}",
                         this
                     );
                 }
             }
         }
 
-        private bool IsInsideBounds(Vector2Int cell)
+        /// <summary>
+        /// 将房间及其占用格注册到网格。
+        /// </summary>
+        private void RegisterRoom(
+            RoomInstance roomInstance,
+            IReadOnlyList<Vector2Int> worldCells)
         {
-            if (!useBounds)
-            {
-                return true;
-            }
+            placedRooms.Add(roomInstance);
 
-            return
-                cell.x >= minCell.x &&
-                cell.x <= maxCell.x &&
-                cell.y >= minCell.y &&
-                cell.y <= maxCell.y;
+            foreach (Vector2Int cell in worldCells)
+            {
+                occupiedRooms.Add(
+                    cell,
+                    roomInstance
+                );
+            }
         }
 
-        private bool TouchesExistingRoom(
-            HashSet<Vector2Int> targetCells)
+        /// <summary>
+        /// 从网格占用记录中注销房间。
+        /// 只有格子仍属于指定房间时才会移除。
+        /// </summary>
+        private void UnregisterRoom(
+            RoomInstance roomInstance,
+            IReadOnlyList<Vector2Int> worldCells)
         {
-            foreach (Vector2Int cell in targetCells)
+            placedRooms.Remove(roomInstance);
+
+            if (worldCells == null)
             {
-                foreach (Vector2Int direction
-                         in FourDirections)
+                return;
+            }
+
+            foreach (Vector2Int cell in worldCells)
+            {
+                if (occupiedRooms.TryGetValue(
+                        cell,
+                        out RoomInstance registeredRoom) &&
+                    registeredRoom == roomInstance)
                 {
-                    Vector2Int neighbour =
-                        cell + direction;
+                    occupiedRooms.Remove(cell);
+                }
+            }
+        }
 
-                    // 当前待放置房间内部的相邻格不算连接已有房间。
-                    if (targetCells.Contains(neighbour))
-                    {
-                        continue;
-                    }
-
-                    if (occupiedCells.ContainsKey(
-                            neighbour))
-                    {
-                        return true;
-                    }
+        /// <summary>
+        /// 判断候选房间是否与任意现有房间四方向相邻。
+        /// </summary>
+        private bool TouchesExistingRoom(
+            HashSet<Vector2Int> candidateCells)
+        {
+            foreach (Vector2Int cell in candidateCells)
+            {
+                if (occupiedRooms.ContainsKey(
+                        cell + Vector2Int.left) ||
+                    occupiedRooms.ContainsKey(
+                        cell + Vector2Int.right) ||
+                    occupiedRooms.ContainsKey(
+                        cell + Vector2Int.down) ||
+                    occupiedRooms.ContainsKey(
+                        cell + Vector2Int.up))
+                {
+                    return true;
                 }
             }
 
             return false;
         }
 
-        private void OnDrawGizmosSelected()
+        /// <summary>
+        /// 判断逻辑格是否处于允许使用的网格范围内。
+        /// </summary>
+        private bool IsWithinBounds(Vector2Int cell)
         {
-            if (!useBounds || cellSize <= 0f)
+            if (!useBounds)
             {
-                return;
+                return true;
             }
 
-            Gizmos.color = Color.yellow;
+            int maximumX =
+                minimumCell.x + gridSize.x;
 
-            Vector3 bottomLeft =
-                CellToWorld(minCell) -
-                new Vector3(
-                    cellSize * 0.5f,
-                    cellSize * 0.5f,
-                    0f
-                );
+            int maximumY =
+                minimumCell.y + gridSize.y;
 
-            Vector2Int cellCount =
-                maxCell -
-                minCell +
-                Vector2Int.one;
+            return
+                cell.x >= minimumCell.x &&
+                cell.y >= minimumCell.y &&
+                cell.x < maximumX &&
+                cell.y < maximumY;
+        }
 
-            Vector3 size =
-                new Vector3(
-                    cellCount.x * cellSize,
-                    cellCount.y * cellSize,
-                    0f
-                );
-
-            Gizmos.DrawWireCube(
-                bottomLeft + size * 0.5f,
-                size
-            );
+        /// <summary>
+        /// 将任意旋转次数规范到 0～3。
+        /// </summary>
+        private static int NormalizeRotation(int rotation)
+        {
+            return ((rotation % 4) + 4) % 4;
         }
     }
 }

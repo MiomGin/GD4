@@ -1,34 +1,28 @@
 namespace Dungeon.RoomSystem
 {
     /// <summary>
-    /// 房间可以持有的基础标签。
-    /// 一个房间允许同时拥有多个标签。
+    /// 描述房间当前具备的结构身份、功能和性质。
+    /// Entrance、Throne 等固定地图身份通常来自 RoomData；
+    /// Trap、Poison 等可变功能通常由 RoomEffect 提供。
     /// </summary>
     public enum RoomTag
     {
         Room,
 
-        Normal,
+        // 固定地图身份
+        Entrance,
+        Throne,
+        Unique,
+
+        // 可变房间功能
         Trap,
         Treasure,
-        Combat,
-        Spawn,
-        Shop,
 
+        // 元素或性质
         Fire,
-        Ice,
         Poison,
-        Electric,
-        Wet,
-
         Mechanical,
         Magical,
-        Cursed,
-        Holy,
-
-        Boss,
-        Unique,
-        Upgradeable,
-        Destroyable
+        Cursed
     }
 }

@@ -34,6 +34,7 @@ namespace Dungeon.RoomSystem
         private int beginPlacementFrame;
 
         private bool currentPlacementValid;
+        private bool buildEnabled = true;
 
         /// <summary>
         /// 当前是否处于房间建造状态。
@@ -51,7 +52,7 @@ namespace Dungeon.RoomSystem
 
         private void Update()
         {
-            if (!IsPlacingRoom)
+            if (!buildEnabled || !IsPlacingRoom)
             {
                 return;
             }
@@ -93,12 +94,31 @@ namespace Dungeon.RoomSystem
         }
 
         /// <summary>
+        /// 设置玩家当前是否可以进行房间建造。
+        /// 禁用建造时会同时取消当前正在预览的房间。
+        /// </summary>
+        public void SetBuildEnabled(bool value)
+        {
+            buildEnabled = value;
+
+            if (!buildEnabled)
+            {
+                CancelPlacement();
+            }
+        }
+
+        /// <summary>
         /// 开始建造指定房间。
         /// 可直接绑定到 UI Button 的 OnClick。
         /// </summary>
         public void BeginPlacement(
             RoomData roomData)
         {
+            if (!buildEnabled)
+            {
+                return;
+            }
+
             if (roomData == null)
             {
                 return;
@@ -144,6 +164,11 @@ namespace Dungeon.RoomSystem
         /// </summary>
         public void ConfirmPlacement()
         {
+            if (!buildEnabled)
+            {
+                return;
+            }
+
             if (!IsPlacingRoom ||
                 !currentPlacementValid)
             {
@@ -194,13 +219,21 @@ namespace Dungeon.RoomSystem
                     pointerWorld
                 );
 
-            currentPlacementValid =
-                dungeonGrid.CanPlace(
+            // 无论当前位置是否合法，都先取得房间应显示的全部目标格，
+            // 这样非法放置时仍然可以显示红色预览。
+            List<Vector2Int> targetCells =
+                dungeonGrid.GetWorldCells(
                     currentRoomData,
                     currentAnchorCell,
-                    currentRotation,
-                    out List<Vector2Int> targetCells
+                    currentRotation
                 );
+
+            currentPlacementValid =
+               dungeonGrid.CanPlace(
+                   currentRoomData,
+                   currentAnchorCell,
+                   currentRotation
+               );
 
             placementPreview.Show(
                 dungeonGrid,

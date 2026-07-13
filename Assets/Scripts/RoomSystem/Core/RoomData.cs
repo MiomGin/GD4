@@ -72,7 +72,7 @@ namespace Dungeon.RoomSystem
         /// <summary>
         /// 房间是否必须连接已有房间。
         /// </summary>
-        public bool MustConnectToExistingRoom =>
+        public bool MustConnect =>
             mustConnectToExistingRoom;
 
         /// <summary>
