@@ -29,12 +29,39 @@ Material:
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
+    - _AAScale: 1
     - _BorderMask: 15
-    - _BorderWidth: 0.1
+    - _BorderWidth: 0.08
+    - _CornerRadius: 0.16
+    - _DarkStrength: 0.25
+    - _DoorJambWidth: 0.079
+    - _DoorMask: 0
+    - _DoorSize: 0.33333334
     - _EnableAA: 0
-    - _GapWidth: 0.02
+    - _GapWidth: 0
+    - _HighlightStrength: 0.573
+    - _HighlightWidth: 0.0703
     - _InnerCornerMask: 0
+    - _LightStrength: 0.2
+    - _RoomShadowStrength: 0.2
+    - _RoomShadowWidth: 0
+    - _ShadowStrength: 1
+    - _ShadowWidth: 0.096
+    - _WallColorBlend: 0.5
+    - _WallCornerRadius: 0.12
+    - _WallDarkStrength: 0.25
+    - _WallLightStrength: 0.3
+    - _WallShadowStrength: 0.25
+    - _WallShadowWidth: 0.025
+    - _WallWidth: 0.08
     m_Colors:
     - _BorderColor: {r: 1, g: 1, b: 1, a: 1}
+    - _DarkColor: {r: 0, g: 0, b: 0, a: 1}
     - _FillColor: {r: 1, g: 1, b: 1, a: 1}
+    - _HighlightColor: {r: 1, g: 0, b: 0, a: 1}
+    - _LightColor: {r: 1, g: 1, b: 1, a: 1}
+    - _RoomShadowColor: {r: 0, g: 0, b: 0, a: 1}
+    - _ShadowColor: {r: 0, g: 0, b: 0, a: 1}
+    - _WallDarkColor: {r: 0, g: 0, b: 0, a: 1}
+    - _WallLightColor: {r: 1, g: 1, b: 1, a: 1}
   m_BuildTextureStacks: []
