@@ -49,11 +49,11 @@ Material:
     - _ShadowWidth: 0.096
     - _WallColorBlend: 0.5
     - _WallCornerRadius: 0.12
-    - _WallDarkStrength: 0.25
+    - _WallDarkStrength: 0.3
     - _WallLightStrength: 0.3
     - _WallShadowStrength: 0.25
     - _WallShadowWidth: 0.025
-    - _WallWidth: 0.08
+    - _WallWidth: 0.05
     m_Colors:
     - _BorderColor: {r: 1, g: 1, b: 1, a: 1}
     - _DarkColor: {r: 0, g: 0, b: 0, a: 1}

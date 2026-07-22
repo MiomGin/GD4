@@ -40,6 +40,9 @@ namespace Dungeon.RoomSystem
         private readonly List<Vector4> uv1 = new List<Vector4>();
         private readonly List<Vector4> uv2 = new List<Vector4>();
         private readonly List<Vector4> uv3 = new List<Vector4>();
+        private readonly List<Vector4> uv4 = new List<Vector4>();
+        private readonly List<Vector4> uv5 = new List<Vector4>();
+        private readonly List<Vector4> uv6 = new List<Vector4>();
 
         /// <summary>
         /// 当前 Chunk 已经创建的全部 BoxCollider2D。
@@ -172,15 +175,39 @@ namespace Dungeon.RoomSystem
                 (float)data.OuterCornerMask
             );
 
-            Vector4 fillColor = data.FillColor;
-            Vector4 borderColor = data.BorderColor;
+            Vector4 fillColor = ToShaderColor(data.FillColor);
+            Vector4 borderColor = ToShaderColor(data.BorderColor);
+            Vector4 wallBaseColor = ToShaderColor(data.WallBaseColor);
+            Vector4 wallDarkColor = ToShaderColor(data.WallDarkColor);
+            Vector4 wallLightColor = ToShaderColor(data.WallLightColor);
 
             for (int i = 0; i < 4; i++)
             {
                 uv1.Add(topology);
                 uv2.Add(fillColor);
                 uv3.Add(borderColor);
+                uv4.Add(wallBaseColor);
+                uv5.Add(wallDarkColor);
+                uv6.Add(wallLightColor);
             }
+        }
+
+        /// <summary>
+        /// sRGB -> Linear
+        /// </summary>
+        private static Vector4 ToShaderColor(Color color)
+        {
+            Color shaderColor =
+                QualitySettings.activeColorSpace == ColorSpace.Linear
+                    ? color.linear
+                    : color;
+
+            return new Vector4(
+                shaderColor.r,
+                shaderColor.g,
+                shaderColor.b,
+                color.a
+            );
         }
 
         /// <summary>
@@ -584,6 +611,9 @@ namespace Dungeon.RoomSystem
             mesh.SetUVs(1, uv1);
             mesh.SetUVs(2, uv2);
             mesh.SetUVs(3, uv3);
+            mesh.SetUVs(4, uv4);
+            mesh.SetUVs(5, uv5);
+            mesh.SetUVs(6, uv6);
 
             mesh.RecalculateBounds();
         }
@@ -599,6 +629,9 @@ namespace Dungeon.RoomSystem
             uv1.Clear();
             uv2.Clear();
             uv3.Clear();
+            uv4.Clear();
+            uv5.Clear();
+            uv6.Clear();
         }
 
         private void CacheComponents()

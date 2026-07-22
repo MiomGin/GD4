@@ -17,6 +17,6 @@ MonoBehaviour:
   occupiedCells:
   - {x: 0, y: 0}
   mustConnectToExistingRoom: 0
-  roomColor: {r: 0, g: 0.6855345, b: 0.024925234, a: 0.39215687}
+  roomColor: {r: 0, g: 0.3962264, b: 0.022427868, a: 1}
   baseTags: 000000000100000003000000
   initialEffects: []

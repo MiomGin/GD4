@@ -8,14 +8,6 @@ Shader "Game/Dungeon/RoomCellBorderChunkParadox"
 
         [Header(Wall)]
         _WallWidth("Wall Width", Range(0, 0.4)) = 0.08
-        _WallColorBlend("Wall Base Color Blend", Range(0, 1)) = 0.45
-
-        _WallDarkColor("Wall Dark Color", Color) = (0, 0, 0, 1)
-        _WallDarkStrength("Wall Dark Strength", Range(0, 1)) = 0.25
-
-        _WallLightColor("Wall Light Color", Color) = (1, 1, 1, 1)
-        _WallLightStrength("Wall Light Strength", Range(0, 1)) = 0.25
-
         [Header(Room Shadow)]
         _RoomShadowWidth("Room Shadow Width", Range(0, 0.3)) = 0.02
         _RoomShadowColor("Room Shadow Color", Color) = (0, 0, 0, 1)
@@ -64,15 +56,12 @@ Shader "Game/Dungeon/RoomCellBorderChunkParadox"
             {
                 float4 positionOS : POSITION;
                 float2 cellUV : TEXCOORD0;
-
-                // x = BorderMask
-                // y = InnerCornerMask
-                // z = DoorMask
-                // w = Reserved
                 float4 topology : TEXCOORD1;
-
                 float4 fillColor : TEXCOORD2;
                 float4 borderColor : TEXCOORD3;
+                float4 wallBaseColor : TEXCOORD4;
+                float4 wallDarkColor : TEXCOORD5;
+                float4 wallLightColor : TEXCOORD6;
             };
 
             struct Varyings
@@ -82,34 +71,28 @@ Shader "Game/Dungeon/RoomCellBorderChunkParadox"
                 nointerpolation float4 topology : TEXCOORD1;
                 float4 fillColor : TEXCOORD2;
                 float4 borderColor : TEXCOORD3;
+                float4 wallBaseColor : TEXCOORD4;
+                float4 wallDarkColor : TEXCOORD5;
+                float4 wallLightColor : TEXCOORD6;
             };
 
             CBUFFER_START(UnityPerMaterial)
-
-            float _BorderWidth;
-            float _GapWidth;
-
-            float _WallWidth;
-            float _WallColorBlend;
-
-            half4 _WallDarkColor;
-            float _WallDarkStrength;
-
-            half4 _WallLightColor;
-            float _WallLightStrength;
-
-            float _RoomShadowWidth;
-            half4 _RoomShadowColor;
-            float _RoomShadowStrength;
-
-            float _DoorSize;
-
+                float _BorderWidth;
+                float _GapWidth;
+                float _WallWidth;
+                float _RoomShadowWidth;
+                half4 _RoomShadowColor;
+                float _RoomShadowStrength;
+                float _DoorSize;
             CBUFFER_END
 
+            // Edge order:   x = Left, y = Right, z = Bottom, w = Top
+            // Corner order: x = BottomLeft, y = BottomRight, z = TopLeft, w = TopRight
 
-            // =====================================================
-            // Utilities
-            // =====================================================
+            float Max4(float4 value)
+            {
+                return max(max(value.x, value.y), max(value.z, value.w));
+            }
 
             float HasMaskBit(float mask, float bitValue)
             {
@@ -117,39 +100,55 @@ Shader "Game/Dungeon/RoomCellBorderChunkParadox"
                 return step(0.5, fmod(divided, 2.0));
             }
 
+            float4 DecodeMask4(float mask)
+            {
+                return float4(
+                    HasMaskBit(mask, 1.0),
+                    HasMaskBit(mask, 2.0),
+                    HasMaskBit(mask, 4.0),
+                    HasMaskBit(mask, 8.0)
+                );
+            }
+
             float CalculateEdgeZone(float distanceToEdge, float enabled, float width, float antiAliasWidth)
             {
                 float hasWidth = step(0.00001, width);
-                float zone;
 
                 #if defined(_ROOM_BORDER_AA_ON)
-                    zone = 1.0 - smoothstep(width - antiAliasWidth, width + antiAliasWidth, distanceToEdge);
+                    float zone = 1.0 - smoothstep(width - antiAliasWidth, width + antiAliasWidth, distanceToEdge);
                 #else
-                    zone = step(distanceToEdge, width);
+                    float zone = step(distanceToEdge, width);
                 #endif
 
                 return zone * enabled * hasWidth;
             }
 
+            float4 CalculateEdgeZone4(float4 distanceToEdge, float4 enabled, float width, float antiAliasWidth)
+            {
+                return float4(
+                    CalculateEdgeZone(distanceToEdge.x, enabled.x, width, antiAliasWidth),
+                    CalculateEdgeZone(distanceToEdge.y, enabled.y, width, antiAliasWidth),
+                    CalculateEdgeZone(distanceToEdge.z, enabled.z, width, antiAliasWidth),
+                    CalculateEdgeZone(distanceToEdge.w, enabled.w, width, antiAliasWidth)
+                );
+            }
+
             float CalculateEdgeBand(float distanceToEdge, float enabled, float startDistance, float bandWidth, float antiAliasWidth)
             {
                 float hasBandWidth = step(0.00001, bandWidth);
-
-                float outerZone = CalculateEdgeZone(
-                    distanceToEdge,
-                    enabled,
-                    startDistance + bandWidth,
-                    antiAliasWidth
-                );
-
-                float innerZone = CalculateEdgeZone(
-                    distanceToEdge,
-                    enabled,
-                    startDistance,
-                    antiAliasWidth
-                );
-
+                float outerZone = CalculateEdgeZone(distanceToEdge, enabled, startDistance + bandWidth, antiAliasWidth);
+                float innerZone = CalculateEdgeZone(distanceToEdge, enabled, startDistance, antiAliasWidth);
                 return saturate(outerZone - innerZone) * hasBandWidth;
+            }
+
+            float4 CalculateEdgeBand4(float4 distanceToEdge, float4 enabled, float startDistance, float bandWidth, float antiAliasWidth)
+            {
+                return float4(
+                    CalculateEdgeBand(distanceToEdge.x, enabled.x, startDistance, bandWidth, antiAliasWidth),
+                    CalculateEdgeBand(distanceToEdge.y, enabled.y, startDistance, bandWidth, antiAliasWidth),
+                    CalculateEdgeBand(distanceToEdge.z, enabled.z, startDistance, bandWidth, antiAliasWidth),
+                    CalculateEdgeBand(distanceToEdge.w, enabled.w, startDistance, bandWidth, antiAliasWidth)
+                );
             }
 
             float CalculateCenteredDoorOpening(float axisCoordinate, float enabled, float doorSize, float antiAliasWidth)
@@ -157,120 +156,115 @@ Shader "Game/Dungeon/RoomCellBorderChunkParadox"
                 float hasDoor = step(0.00001, doorSize);
                 float halfDoorSize = doorSize * 0.5;
                 float distanceToCenter = abs(axisCoordinate - 0.5);
-                float opening;
 
                 #if defined(_ROOM_BORDER_AA_ON)
-                    opening = 1.0 - smoothstep(
-                        halfDoorSize - antiAliasWidth,
-                        halfDoorSize + antiAliasWidth,
-                        distanceToCenter
-                    );
+                    float opening = 1.0 - smoothstep(halfDoorSize - antiAliasWidth, halfDoorSize + antiAliasWidth, distanceToCenter);
                 #else
-                    opening = step(distanceToCenter, halfDoorSize);
+                    float opening = step(distanceToCenter, halfDoorSize);
                 #endif
 
                 return opening * enabled * hasDoor;
             }
 
+            float4 CalculateCenteredDoorOpening4(float4 axisCoordinate, float4 enabled, float doorSize, float antiAliasWidth)
+            {
+                return float4(
+                    CalculateCenteredDoorOpening(axisCoordinate.x, enabled.x, doorSize, antiAliasWidth),
+                    CalculateCenteredDoorOpening(axisCoordinate.y, enabled.y, doorSize, antiAliasWidth),
+                    CalculateCenteredDoorOpening(axisCoordinate.z, enabled.z, doorSize, antiAliasWidth),
+                    CalculateCenteredDoorOpening(axisCoordinate.w, enabled.w, doorSize, antiAliasWidth)
+                );
+            }
+
             float CalculateSquareZone(float horizontalDistance, float verticalDistance, float enabled, float width, float antiAliasWidth)
             {
-                float horizontalZone = CalculateEdgeZone(
-                    horizontalDistance,
-                    enabled,
-                    width,
-                    antiAliasWidth
-                );
-
-                float verticalZone = CalculateEdgeZone(
-                    verticalDistance,
-                    enabled,
-                    width,
-                    antiAliasWidth
-                );
-
+                float horizontalZone = CalculateEdgeZone(horizontalDistance, enabled, width, antiAliasWidth);
+                float verticalZone = CalculateEdgeZone(verticalDistance, enabled, width, antiAliasWidth);
                 return min(horizontalZone, verticalZone);
             }
 
-            float CalculateSquareBand(
-                float horizontalDistance,
-                float verticalDistance,
-                float enabled,
-                float startDistance,
-                float bandWidth,
-                float antiAliasWidth)
+            float4 CalculateCornerZone4(float4 horizontalDistance, float4 verticalDistance, float4 enabled, float width, float antiAliasWidth)
+            {
+                return float4(
+                    CalculateSquareZone(horizontalDistance.x, verticalDistance.x, enabled.x, width, antiAliasWidth),
+                    CalculateSquareZone(horizontalDistance.y, verticalDistance.y, enabled.y, width, antiAliasWidth),
+                    CalculateSquareZone(horizontalDistance.z, verticalDistance.z, enabled.z, width, antiAliasWidth),
+                    CalculateSquareZone(horizontalDistance.w, verticalDistance.w, enabled.w, width, antiAliasWidth)
+                );
+            }
+
+            float CalculateSquareBand(float horizontalDistance, float verticalDistance, float enabled, float startDistance, float bandWidth, float antiAliasWidth)
             {
                 float hasBandWidth = step(0.00001, bandWidth);
-
-                float outerZone = CalculateSquareZone(
-                    horizontalDistance,
-                    verticalDistance,
-                    enabled,
-                    startDistance + bandWidth,
-                    antiAliasWidth
-                );
-
-                float innerZone = CalculateSquareZone(
-                    horizontalDistance,
-                    verticalDistance,
-                    enabled,
-                    startDistance,
-                    antiAliasWidth
-                );
-
+                float outerZone = CalculateSquareZone(horizontalDistance, verticalDistance, enabled, startDistance + bandWidth, antiAliasWidth);
+                float innerZone = CalculateSquareZone(horizontalDistance, verticalDistance, enabled, startDistance, antiAliasWidth);
                 return saturate(outerZone - innerZone) * hasBandWidth;
             }
 
-            float CalculateRangeZone(float coordinate, float minimum, float maximum, float antiAliasWidth)
+            float4 CalculateCornerBand4(float4 horizontalDistance, float4 verticalDistance, float4 enabled, float startDistance, float bandWidth, float antiAliasWidth)
             {
-                float hasWidth = step(0.00001, maximum - minimum);
+                return float4(
+                    CalculateSquareBand(horizontalDistance.x, verticalDistance.x, enabled.x, startDistance, bandWidth, antiAliasWidth),
+                    CalculateSquareBand(horizontalDistance.y, verticalDistance.y, enabled.y, startDistance, bandWidth, antiAliasWidth),
+                    CalculateSquareBand(horizontalDistance.z, verticalDistance.z, enabled.z, startDistance, bandWidth, antiAliasWidth),
+                    CalculateSquareBand(horizontalDistance.w, verticalDistance.w, enabled.w, startDistance, bandWidth, antiAliasWidth)
+                );
+            }
+
+            float CalculateRangeZone(float coordinate, float minimumValue, float maximumValue, float antiAliasWidth)
+            {
+                float hasWidth = step(0.00001, maximumValue - minimumValue);
 
                 #if defined(_ROOM_BORDER_AA_ON)
-
-                    float lower = smoothstep(
-                        minimum - antiAliasWidth,
-                        minimum + antiAliasWidth,
-                        coordinate
-                    );
-
-                    float upper = 1.0 - smoothstep(
-                        maximum - antiAliasWidth,
-                        maximum + antiAliasWidth,
-                        coordinate
-                    );
-
+                    float lower = smoothstep(minimumValue - antiAliasWidth, minimumValue + antiAliasWidth, coordinate);
+                    float upper = 1.0 - smoothstep(maximumValue - antiAliasWidth, maximumValue + antiAliasWidth, coordinate);
                     return lower * upper * hasWidth;
-
                 #else
-
-                    return step(minimum, coordinate) *
-                           step(coordinate, maximum) *
-                           hasWidth;
-
+                    return step(minimumValue, coordinate) * step(coordinate, maximumValue) * hasWidth;
                 #endif
             }
 
+            // Returns 1 on the top-left side and 0 on the bottom-right side.
+            float CalculateTopLeftLightSplit(float2 samplePosition, float2 minimumValue, float2 maximumValue, float antiAliasWidth)
+            {
+                float2 size = max(maximumValue - minimumValue, float2(0.00001, 0.00001));
+                float2 localUV = saturate((samplePosition - minimumValue) / size);
+                float diagonal = localUV.y - localUV.x;
 
-            // =====================================================
-            // Vertex
-            // =====================================================
+                #if defined(_ROOM_BORDER_AA_ON)
+                    float normalizedAA = max(antiAliasWidth / max(size.x, size.y), 0.0001);
+                    return smoothstep(-normalizedAA, normalizedAA, diagonal);
+                #else
+                    return step(localUV.x, localUV.y);
+                #endif
+            }
+
+            // Returns x = Dark contribution, y = Light contribution.
+            // This preserves the original max-based Body/Join composition.
+            float2 EvaluateDoorDiagonalEndpoint(float wrap, float joinZone, float lightSplit, float bodyIsLight)
+            {
+                float join = wrap * joinZone;
+                float body = wrap * (1.0 - joinZone);
+
+                float dark = max(body * (1.0 - bodyIsLight), join * (1.0 - lightSplit));
+                float light = max(body * bodyIsLight, join * lightSplit);
+
+                return float2(dark, light);
+            }
 
             Varyings Vert(Attributes input)
             {
                 Varyings output;
-
                 output.positionCS = TransformObjectToHClip(input.positionOS.xyz);
                 output.cellUV = input.cellUV;
                 output.topology = input.topology;
                 output.fillColor = input.fillColor;
                 output.borderColor = input.borderColor;
-
+                output.wallBaseColor = input.wallBaseColor;
+                output.wallDarkColor = input.wallDarkColor;
+                output.wallLightColor = input.wallLightColor;
                 return output;
             }
-
-
-            // =====================================================
-            // Fragment
-            // =====================================================
 
             half4 Frag(Varyings input) : SV_Target
             {
@@ -280,1403 +274,312 @@ Shader "Game/Dungeon/RoomCellBorderChunkParadox"
                 float innerCornerMask = round(input.topology.y);
                 float doorMask = round(input.topology.z);
 
-
-                // =================================================
-                // Geometry
-                // =================================================
-
                 float gapWidth = clamp(_GapWidth, 0.0, 0.49);
                 float borderWidth = clamp(_BorderWidth, 0.0, 0.5 - gapWidth);
                 float borderEnd = gapWidth + borderWidth;
-
                 float wallWidth = clamp(_WallWidth, 0.0, 0.5 - borderEnd);
                 float wallEnd = borderEnd + wallWidth;
-
-                float roomShadowWidth = clamp(
-                    _RoomShadowWidth,
-                    0.0,
-                    0.5 - wallEnd
-                );
+                float roomShadowWidth = clamp(_RoomShadowWidth, 0.0, 0.5 - wallEnd);
 
                 float antiAliasWidth = 0.0;
 
                 #if defined(_ROOM_BORDER_AA_ON)
-
-                    antiAliasWidth = max(
-                        max(
-                            fwidth(cellUV.x),
-                            fwidth(cellUV.y)
-                        ),
-                        0.0001
-                    );
-
+                    antiAliasWidth = max(max(fwidth(cellUV.x), fwidth(cellUV.y)), 0.0001);
                 #endif
+
+                // -------------------------------------------------
+                // Shared topology and distance data
+                // -------------------------------------------------
 
                 float leftDistance = cellUV.x;
                 float rightDistance = 1.0 - cellUV.x;
                 float bottomDistance = cellUV.y;
                 float topDistance = 1.0 - cellUV.y;
 
+                float4 edgeDistance = float4(leftDistance, rightDistance, bottomDistance, topDistance);
+                float4 cornerHorizontalDistance = float4(leftDistance, rightDistance, leftDistance, rightDistance);
+                float4 cornerVerticalDistance = float4(bottomDistance, bottomDistance, topDistance, topDistance);
 
-                // =================================================
-                // Topology
-                // =================================================
-
-                float leftEnabled = HasMaskBit(borderMask, 1.0);
-                float rightEnabled = HasMaskBit(borderMask, 2.0);
-                float bottomEnabled = HasMaskBit(borderMask, 4.0);
-                float topEnabled = HasMaskBit(borderMask, 8.0);
-
-                /*
-                 * InnerCorner stays exactly as the original CPU
-                 * topology result.
-                 *
-                 * It is NOT multiplied by DoorOpening.
-                 */
-                float bottomLeftInner = HasMaskBit(innerCornerMask, 1.0);
-                float bottomRightInner = HasMaskBit(innerCornerMask, 2.0);
-                float topLeftInner = HasMaskBit(innerCornerMask, 4.0);
-                float topRightInner = HasMaskBit(innerCornerMask, 8.0);
-
-                float leftDoorEnabled = HasMaskBit(doorMask, 1.0);
-                float rightDoorEnabled = HasMaskBit(doorMask, 2.0);
-                float bottomDoorEnabled = HasMaskBit(doorMask, 4.0);
-                float topDoorEnabled = HasMaskBit(doorMask, 8.0);
-
-
-                // =================================================
-                // Door Opening
-                // =================================================
+                float4 edgeEnabled = DecodeMask4(borderMask);
+                float4 cornerEnabled = DecodeMask4(innerCornerMask);
+                float4 doorEnabled = DecodeMask4(doorMask);
 
                 float doorSize = clamp(_DoorSize, 0.0, 0.9999);
                 float halfDoorSize = doorSize * 0.5;
-
                 float doorMinimum = 0.5 - halfDoorSize;
                 float doorMaximum = 0.5 + halfDoorSize;
 
-                float leftDoorOpening = CalculateCenteredDoorOpening(
-                    cellUV.y,
-                    leftDoorEnabled,
-                    doorSize,
-                    antiAliasWidth
-                );
-
-                float rightDoorOpening = CalculateCenteredDoorOpening(
-                    cellUV.y,
-                    rightDoorEnabled,
-                    doorSize,
-                    antiAliasWidth
-                );
-
-                float bottomDoorOpening = CalculateCenteredDoorOpening(
-                    cellUV.x,
-                    bottomDoorEnabled,
-                    doorSize,
-                    antiAliasWidth
-                );
-
-                float topDoorOpening = CalculateCenteredDoorOpening(
-                    cellUV.x,
-                    topDoorEnabled,
-                    doorSize,
-                    antiAliasWidth
-                );
-
+                float4 doorAxis = float4(cellUV.y, cellUV.y, cellUV.x, cellUV.x);
+                float4 doorOpening = CalculateCenteredDoorOpening4(doorAxis, doorEnabled, doorSize, antiAliasWidth);
 
                 // =================================================
                 // Gap
                 // =================================================
 
-                float leftGap = CalculateEdgeZone(
-                    leftDistance,
-                    leftEnabled,
-                    gapWidth,
-                    antiAliasWidth
-                ) * (1.0 - leftDoorOpening);
-
-                float rightGap = CalculateEdgeZone(
-                    rightDistance,
-                    rightEnabled,
-                    gapWidth,
-                    antiAliasWidth
-                ) * (1.0 - rightDoorOpening);
-
-                float bottomGap = CalculateEdgeZone(
-                    bottomDistance,
-                    bottomEnabled,
-                    gapWidth,
-                    antiAliasWidth
-                ) * (1.0 - bottomDoorOpening);
-
-                float topGap = CalculateEdgeZone(
-                    topDistance,
-                    topEnabled,
-                    gapWidth,
-                    antiAliasWidth
-                ) * (1.0 - topDoorOpening);
-
-                float edgeGapFactor = max(
-                    max(leftGap, rightGap),
-                    max(bottomGap, topGap)
-                );
-
-                float bottomLeftGap = CalculateSquareZone(
-                    leftDistance,
-                    bottomDistance,
-                    bottomLeftInner,
-                    gapWidth,
-                    antiAliasWidth
-                );
-
-                float bottomRightGap = CalculateSquareZone(
-                    rightDistance,
-                    bottomDistance,
-                    bottomRightInner,
-                    gapWidth,
-                    antiAliasWidth
-                );
-
-                float topLeftGap = CalculateSquareZone(
-                    leftDistance,
-                    topDistance,
-                    topLeftInner,
-                    gapWidth,
-                    antiAliasWidth
-                );
-
-                float topRightGap = CalculateSquareZone(
-                    rightDistance,
-                    topDistance,
-                    topRightInner,
-                    gapWidth,
-                    antiAliasWidth
-                );
-
-                float cornerGapFactor = max(
-                    max(bottomLeftGap, bottomRightGap),
-                    max(topLeftGap, topRightGap)
-                );
-
-                float gapFactor = saturate(
-                    max(
-                        edgeGapFactor,
-                        cornerGapFactor
-                    )
-                );
-
+                float4 edgeGap = CalculateEdgeZone4(edgeDistance, edgeEnabled, gapWidth, antiAliasWidth) * (1.0 - doorOpening);
+                float4 cornerGap = CalculateCornerZone4(cornerHorizontalDistance, cornerVerticalDistance, cornerEnabled, gapWidth, antiAliasWidth);
+                float gapFactor = saturate(max(Max4(edgeGap), Max4(cornerGap)));
 
                 // =================================================
-                // Outer Border
+                // OuterBorder
                 // =================================================
 
-                float leftBorder = CalculateEdgeBand(
-                    leftDistance,
-                    leftEnabled,
-                    gapWidth,
-                    borderWidth,
-                    antiAliasWidth
-                ) * (1.0 - leftDoorOpening);
-
-                float rightBorder = CalculateEdgeBand(
-                    rightDistance,
-                    rightEnabled,
-                    gapWidth,
-                    borderWidth,
-                    antiAliasWidth
-                ) * (1.0 - rightDoorOpening);
-
-                float bottomBorder = CalculateEdgeBand(
-                    bottomDistance,
-                    bottomEnabled,
-                    gapWidth,
-                    borderWidth,
-                    antiAliasWidth
-                ) * (1.0 - bottomDoorOpening);
-
-                float topBorder = CalculateEdgeBand(
-                    topDistance,
-                    topEnabled,
-                    gapWidth,
-                    borderWidth,
-                    antiAliasWidth
-                ) * (1.0 - topDoorOpening);
-
-                float edgeBorderFactor = max(
-                    max(leftBorder, rightBorder),
-                    max(bottomBorder, topBorder)
-                );
-
-                float bottomLeftBorder = CalculateSquareBand(
-                    leftDistance,
-                    bottomDistance,
-                    bottomLeftInner,
-                    gapWidth,
-                    borderWidth,
-                    antiAliasWidth
-                );
-
-                float bottomRightBorder = CalculateSquareBand(
-                    rightDistance,
-                    bottomDistance,
-                    bottomRightInner,
-                    gapWidth,
-                    borderWidth,
-                    antiAliasWidth
-                );
-
-                float topLeftBorder = CalculateSquareBand(
-                    leftDistance,
-                    topDistance,
-                    topLeftInner,
-                    gapWidth,
-                    borderWidth,
-                    antiAliasWidth
-                );
-
-                float topRightBorder = CalculateSquareBand(
-                    rightDistance,
-                    topDistance,
-                    topRightInner,
-                    gapWidth,
-                    borderWidth,
-                    antiAliasWidth
-                );
-
-                float cornerBorderFactor = max(
-                    max(bottomLeftBorder, bottomRightBorder),
-                    max(topLeftBorder, topRightBorder)
-                );
-
-                float outerBorderFactor = saturate(
-                    max(
-                        edgeBorderFactor,
-                        cornerBorderFactor
-                    )
-                );
-
+                float4 edgeBorder = CalculateEdgeBand4(edgeDistance, edgeEnabled, gapWidth, borderWidth, antiAliasWidth) * (1.0 - doorOpening);
+                float4 cornerBorder = CalculateCornerBand4(cornerHorizontalDistance, cornerVerticalDistance, cornerEnabled, gapWidth, borderWidth, antiAliasWidth);
+                float outerBorderFactor = saturate(max(Max4(edgeBorder), Max4(cornerBorder)));
 
                 // =================================================
-                // Raw Wall
+                // Main Wall
                 // =================================================
 
-                float leftWallRaw = CalculateEdgeBand(
-                    leftDistance,
-                    leftEnabled,
-                    borderEnd,
-                    wallWidth,
-                    antiAliasWidth
-                );
-
-                float rightWallRaw = CalculateEdgeBand(
-                    rightDistance,
-                    rightEnabled,
-                    borderEnd,
-                    wallWidth,
-                    antiAliasWidth
-                );
-
-                float bottomWallRaw = CalculateEdgeBand(
-                    bottomDistance,
-                    bottomEnabled,
-                    borderEnd,
-                    wallWidth,
-                    antiAliasWidth
-                );
-
-                float topWallRaw = CalculateEdgeBand(
-                    topDistance,
-                    topEnabled,
-                    borderEnd,
-                    wallWidth,
-                    antiAliasWidth
-                );
-
-
-                // =================================================
-                // Door Wrap
-                // =================================================
-
-                float doorWrapWidth = min(
-                    wallWidth,
-                    halfDoorSize
-                );
-
-
-                // Top Door
-
-                float topDoorDepth = CalculateEdgeZone(
-                    topDistance,
-                    topDoorEnabled,
-                    wallEnd,
-                    antiAliasWidth
-                );
-
-                float topDoorLeftWrap = topDoorDepth * CalculateRangeZone(
-                    cellUV.x,
-                    doorMinimum,
-                    doorMinimum + doorWrapWidth,
-                    antiAliasWidth
-                );
-
-                float topDoorRightWrap = topDoorDepth * CalculateRangeZone(
-                    cellUV.x,
-                    doorMaximum - doorWrapWidth,
-                    doorMaximum,
-                    antiAliasWidth
-                );
-
-
-                // Bottom Door
-
-                float bottomDoorDepth = CalculateEdgeZone(
-                    bottomDistance,
-                    bottomDoorEnabled,
-                    wallEnd,
-                    antiAliasWidth
-                );
-
-                float bottomDoorLeftWrap = bottomDoorDepth * CalculateRangeZone(
-                    cellUV.x,
-                    doorMinimum,
-                    doorMinimum + doorWrapWidth,
-                    antiAliasWidth
-                );
-
-                float bottomDoorRightWrap = bottomDoorDepth * CalculateRangeZone(
-                    cellUV.x,
-                    doorMaximum - doorWrapWidth,
-                    doorMaximum,
-                    antiAliasWidth
-                );
-
-
-                // Left Door
-
-                float leftDoorDepth = CalculateEdgeZone(
-                    leftDistance,
-                    leftDoorEnabled,
-                    wallEnd,
-                    antiAliasWidth
-                );
-
-                float leftDoorBottomWrap = leftDoorDepth * CalculateRangeZone(
-                    cellUV.y,
-                    doorMinimum,
-                    doorMinimum + doorWrapWidth,
-                    antiAliasWidth
-                );
-
-                float leftDoorTopWrap = leftDoorDepth * CalculateRangeZone(
-                    cellUV.y,
-                    doorMaximum - doorWrapWidth,
-                    doorMaximum,
-                    antiAliasWidth
-                );
-
-
-                // Right Door
-
-                float rightDoorDepth = CalculateEdgeZone(
-                    rightDistance,
-                    rightDoorEnabled,
-                    wallEnd,
-                    antiAliasWidth
-                );
-
-                float rightDoorBottomWrap = rightDoorDepth * CalculateRangeZone(
-                    cellUV.y,
-                    doorMinimum,
-                    doorMinimum + doorWrapWidth,
-                    antiAliasWidth
-                );
-
-                float rightDoorTopWrap = rightDoorDepth * CalculateRangeZone(
-                    cellUV.y,
-                    doorMaximum - doorWrapWidth,
-                    doorMaximum,
-                    antiAliasWidth
-                );
-
-
-                // =================================================
-                // Door Endpoint Join Regions
-                //
-                // Join only exists where:
-                //
-                // Raw straight Wall
-                //      กษ
-                // Door Wrap
-                //
-                // This region belongs exclusively to the Mitre.
-                // =================================================
-
-                float topDoorLeftJoin =
-                    topDoorLeftWrap *
-                    topWallRaw;
-
-                float topDoorRightJoin =
-                    topDoorRightWrap *
-                    topWallRaw;
-
-                float bottomDoorLeftJoin =
-                    bottomDoorLeftWrap *
-                    bottomWallRaw;
-
-                float bottomDoorRightJoin =
-                    bottomDoorRightWrap *
-                    bottomWallRaw;
-
-                float leftDoorBottomJoin =
-                    leftDoorBottomWrap *
-                    leftWallRaw;
-
-                float leftDoorTopJoin =
-                    leftDoorTopWrap *
-                    leftWallRaw;
-
-                float rightDoorBottomJoin =
-                    rightDoorBottomWrap *
-                    rightWallRaw;
-
-                float rightDoorTopJoin =
-                    rightDoorTopWrap *
-                    rightWallRaw;
-
-
-                // =================================================
-                // Straight Wall
-                //
-                // Door opening removes the middle section.
-                //
-                // Endpoint Join regions are then explicitly removed
-                // so Straight Wall cannot overlap Mitre geometry.
-                // =================================================
-
-                float topDoorJoinMask =
-                    saturate(
-                        max(
-                            topDoorLeftJoin,
-                            topDoorRightJoin
-                        )
-                    );
-
-                float bottomDoorJoinMask =
-                    saturate(
-                        max(
-                            bottomDoorLeftJoin,
-                            bottomDoorRightJoin
-                        )
-                    );
-
-                float leftDoorJoinMask =
-                    saturate(
-                        max(
-                            leftDoorBottomJoin,
-                            leftDoorTopJoin
-                        )
-                    );
-
-                float rightDoorJoinMask =
-                    saturate(
-                        max(
-                            rightDoorBottomJoin,
-                            rightDoorTopJoin
-                        )
-                    );
-
-
-                float leftWall =
-                    leftWallRaw *
-                    (1.0 - leftDoorOpening) *
-                    (1.0 - leftDoorJoinMask);
-
-                float rightWall =
-                    rightWallRaw *
-                    (1.0 - rightDoorOpening) *
-                    (1.0 - rightDoorJoinMask);
-
-                float bottomWall =
-                    bottomWallRaw *
-                    (1.0 - bottomDoorOpening) *
-                    (1.0 - bottomDoorJoinMask);
-
-                float topWall =
-                    topWallRaw *
-                    (1.0 - topDoorOpening) *
-                    (1.0 - topDoorJoinMask);
-
-
-                // =================================================
-                // Door Wrap Bodies
-                //
-                // Join region is removed from each Wrap as well.
-                // =================================================
-
-                float topDoorLeftWrapBody =
-                    topDoorLeftWrap *
-                    (1.0 - topDoorLeftJoin);
-
-                float topDoorRightWrapBody =
-                    topDoorRightWrap *
-                    (1.0 - topDoorRightJoin);
-
-
-                float bottomDoorLeftWrapBody =
-                    bottomDoorLeftWrap *
-                    (1.0 - bottomDoorLeftJoin);
-
-                float bottomDoorRightWrapBody =
-                    bottomDoorRightWrap *
-                    (1.0 - bottomDoorRightJoin);
-
-
-                float leftDoorBottomWrapBody =
-                    leftDoorBottomWrap *
-                    (1.0 - leftDoorBottomJoin);
-
-                float leftDoorTopWrapBody =
-                    leftDoorTopWrap *
-                    (1.0 - leftDoorTopJoin);
-
-
-                float rightDoorBottomWrapBody =
-                    rightDoorBottomWrap *
-                    (1.0 - rightDoorBottomJoin);
-
-                float rightDoorTopWrapBody =
-                    rightDoorTopWrap *
-                    (1.0 - rightDoorTopJoin);
-
-
-                // =================================================
-                // Main Wall Lighting
-                // =================================================
+                float4 wallRaw = CalculateEdgeBand4(edgeDistance, edgeEnabled, borderEnd, wallWidth, antiAliasWidth);
+                float4 wall = wallRaw * (1.0 - doorOpening);
 
                 float mainDarkWallFactor = 0.0;
                 float mainLightWallFactor = 0.0;
 
+                // Top-right outer corner: Top dark / Right light.
+                float topRightOverlap = min(wall.w, wall.y);
+                float topRightDarkSplit = step(topDistance, rightDistance);
 
-                // -------------------------------------------------
-                // Straight outer corner: Top Right
-                //
-                // Top Dark / Right Light
-                // -------------------------------------------------
+                mainDarkWallFactor = max(mainDarkWallFactor, wall.w * (1.0 - topRightOverlap));
+                mainDarkWallFactor = max(mainDarkWallFactor, topRightOverlap * topRightDarkSplit);
+                mainLightWallFactor = max(mainLightWallFactor, wall.y * (1.0 - topRightOverlap));
+                mainLightWallFactor = max(mainLightWallFactor, topRightOverlap * (1.0 - topRightDarkSplit));
 
-                float topRightOverlap =
-                    topWall *
-                    rightWall;
+                // Bottom-left outer corner: Left dark / Bottom light.
+                float bottomLeftOverlap = min(wall.x, wall.z);
+                float bottomLeftDarkSplit = step(leftDistance, bottomDistance);
 
-                float topRightDarkSplit =
-                    step(
-                        topDistance,
-                        rightDistance
-                    );
-
-
-                mainDarkWallFactor =
-                    max(
-                        mainDarkWallFactor,
-                        topWall *
-                        (1.0 - topRightOverlap)
-                    );
-
-                mainDarkWallFactor =
-                    max(
-                        mainDarkWallFactor,
-                        topRightOverlap *
-                        topRightDarkSplit
-                    );
-
-
-                mainLightWallFactor =
-                    max(
-                        mainLightWallFactor,
-                        rightWall *
-                        (1.0 - topRightOverlap)
-                    );
-
-                mainLightWallFactor =
-                    max(
-                        mainLightWallFactor,
-                        topRightOverlap *
-                        (1.0 - topRightDarkSplit)
-                    );
-
-
-                // -------------------------------------------------
-                // Straight outer corner: Bottom Left
-                //
-                // Left Dark / Bottom Light
-                // -------------------------------------------------
-
-                float bottomLeftOverlap =
-                    leftWall *
-                    bottomWall;
-
-                float bottomLeftDarkSplit =
-                    step(
-                        leftDistance,
-                        bottomDistance
-                    );
-
-
-                mainDarkWallFactor =
-                    max(
-                        mainDarkWallFactor,
-                        leftWall *
-                        (1.0 - bottomLeftOverlap)
-                    );
-
-                mainDarkWallFactor =
-                    max(
-                        mainDarkWallFactor,
-                        bottomLeftOverlap *
-                        bottomLeftDarkSplit
-                    );
-
-
-                mainLightWallFactor =
-                    max(
-                        mainLightWallFactor,
-                        bottomWall *
-                        (1.0 - bottomLeftOverlap)
-                    );
-
-                mainLightWallFactor =
-                    max(
-                        mainLightWallFactor,
-                        bottomLeftOverlap *
-                        (1.0 - bottomLeftDarkSplit)
-                    );
-
+                mainDarkWallFactor = max(mainDarkWallFactor, wall.x * (1.0 - bottomLeftOverlap));
+                mainDarkWallFactor = max(mainDarkWallFactor, bottomLeftOverlap * bottomLeftDarkSplit);
+                mainLightWallFactor = max(mainLightWallFactor, wall.z * (1.0 - bottomLeftOverlap));
+                mainLightWallFactor = max(mainLightWallFactor, bottomLeftOverlap * (1.0 - bottomLeftDarkSplit));
 
                 // Same-color outer corners.
-
-                mainDarkWallFactor =
-                    max(
-                        mainDarkWallFactor,
-                        leftWall *
-                        topWall
-                    );
-
-                mainLightWallFactor =
-                    max(
-                        mainLightWallFactor,
-                        rightWall *
-                        bottomWall
-                    );
-
+                mainDarkWallFactor = max(mainDarkWallFactor, wall.x * wall.w);
+                mainLightWallFactor = max(mainLightWallFactor, wall.y * wall.z);
 
                 // =================================================
-                // Original Inner Corner Geometry
+                // L-shaped Inner Corner Wall
                 //
-                // No Door-aware modification here.
+                // Outward-expanded lighting:
+                // TopLeft     = Dark
+                // TopRight    = Top Light / Right Dark
+                // BottomLeft  = Left Light / Bottom Dark
+                // BottomRight = Light
                 // =================================================
 
-                float bottomLeftWall = CalculateSquareBand(
-                    leftDistance,
-                    bottomDistance,
-                    bottomLeftInner,
+                float4 cornerWall = CalculateCornerBand4(
+                    cornerHorizontalDistance,
+                    cornerVerticalDistance,
+                    cornerEnabled,
                     borderEnd,
                     wallWidth,
                     antiAliasWidth
                 );
 
-                float bottomRightWall = CalculateSquareBand(
-                    rightDistance,
-                    bottomDistance,
-                    bottomRightInner,
-                    borderEnd,
-                    wallWidth,
-                    antiAliasWidth
-                );
+                mainDarkWallFactor = max(mainDarkWallFactor, cornerWall.z);
+                mainLightWallFactor = max(mainLightWallFactor, cornerWall.y);
 
-                float topLeftWall = CalculateSquareBand(
-                    leftDistance,
-                    topDistance,
-                    topLeftInner,
-                    borderEnd,
-                    wallWidth,
-                    antiAliasWidth
-                );
+                float bottomLeftInnerLeftSplit = step(leftDistance, bottomDistance);
+                mainLightWallFactor = max(mainLightWallFactor, cornerWall.x * bottomLeftInnerLeftSplit);
+                mainDarkWallFactor = max(mainDarkWallFactor, cornerWall.x * (1.0 - bottomLeftInnerLeftSplit));
 
-                float topRightWall = CalculateSquareBand(
-                    rightDistance,
-                    topDistance,
-                    topRightInner,
-                    borderEnd,
-                    wallWidth,
-                    antiAliasWidth
-                );
-
-
-                // Top Left = Dark.
-
-                mainDarkWallFactor =
-                    max(
-                        mainDarkWallFactor,
-                        topLeftWall
-                    );
-
-
-                // Bottom Right = Light.
-
-                mainLightWallFactor =
-                    max(
-                        mainLightWallFactor,
-                        bottomRightWall
-                    );
-
-
-                // Bottom Left = Dark / Light split.
-
-                float bottomLeftInnerDarkSplit =
-                    step(
-                        leftDistance,
-                        bottomDistance
-                    );
-
-                mainDarkWallFactor =
-                    max(
-                        mainDarkWallFactor,
-                        bottomLeftWall *
-                        bottomLeftInnerDarkSplit
-                    );
-
-                mainLightWallFactor =
-                    max(
-                        mainLightWallFactor,
-                        bottomLeftWall *
-                        (1.0 - bottomLeftInnerDarkSplit)
-                    );
-
-
-                // Top Right = Dark / Light split.
-
-                float topRightInnerDarkSplit =
-                    step(
-                        topDistance,
-                        rightDistance
-                    );
-
-                mainDarkWallFactor =
-                    max(
-                        mainDarkWallFactor,
-                        topRightWall *
-                        topRightInnerDarkSplit
-                    );
-
-                mainLightWallFactor =
-                    max(
-                        mainLightWallFactor,
-                        topRightWall *
-                        (1.0 - topRightInnerDarkSplit)
-                    );
-
+                float topRightInnerTopSplit = step(topDistance, rightDistance);
+                mainLightWallFactor = max(mainLightWallFactor, cornerWall.w * topRightInnerTopSplit);
+                mainDarkWallFactor = max(mainDarkWallFactor, cornerWall.w * (1.0 - topRightInnerTopSplit));
 
                 // =================================================
-                // Door Wall Lighting
+                // Outer-expanding DoorWrap
+                // =================================================
+
+                float doorWrapWidth = min(wallWidth, halfDoorSize);
+                float4 doorDepth = CalculateEdgeZone4(edgeDistance, doorEnabled, wallEnd, antiAliasWidth);
+
+                float topDoorLeftWrap = doorDepth.w * CalculateRangeZone(cellUV.x, doorMinimum, doorMinimum + doorWrapWidth, antiAliasWidth);
+                float topDoorRightWrap = doorDepth.w * CalculateRangeZone(cellUV.x, doorMaximum - doorWrapWidth, doorMaximum, antiAliasWidth);
+
+                float bottomDoorLeftWrap = doorDepth.z * CalculateRangeZone(cellUV.x, doorMinimum, doorMinimum + doorWrapWidth, antiAliasWidth);
+                float bottomDoorRightWrap = doorDepth.z * CalculateRangeZone(cellUV.x, doorMaximum - doorWrapWidth, doorMaximum, antiAliasWidth);
+
+                float leftDoorBottomWrap = doorDepth.x * CalculateRangeZone(cellUV.y, doorMinimum, doorMinimum + doorWrapWidth, antiAliasWidth);
+                float leftDoorTopWrap = doorDepth.x * CalculateRangeZone(cellUV.y, doorMaximum - doorWrapWidth, doorMaximum, antiAliasWidth);
+
+                float rightDoorBottomWrap = doorDepth.y * CalculateRangeZone(cellUV.y, doorMinimum, doorMinimum + doorWrapWidth, antiAliasWidth);
+                float rightDoorTopWrap = doorDepth.y * CalculateRangeZone(cellUV.y, doorMaximum - doorWrapWidth, doorMaximum, antiAliasWidth);
+
+                // =================================================
+                // Door Endpoint Lighting
                 //
-                // Door Wrap and Door Mitre are separated from the
-                // normal Wall so they can later render over the cut
-                // OuterBorder without changing normal wall priority.
+                // Pure Dark:  TopDoor.Left, LeftDoor.Top
+                // Pure Light: BottomDoor.Right, RightDoor.Bottom
+                //
+                // Diagonal endpoints use a square Join:
+                // top-left = Light, bottom-right = Dark.
                 // =================================================
 
-                float doorDarkWallFactor = 0.0;
-                float doorLightWallFactor = 0.0;
-
-
-                // =================================================
-                // TOP DOOR
-                // =================================================
-
-                // Left wrap = Dark.
-
-                doorDarkWallFactor =
-                    max(
-                        doorDarkWallFactor,
-                        topDoorLeftWrapBody
-                    );
-
-
-                /*
-                 * Left Join:
-                 *
-                 * Top = Dark
-                 * Left Wrap = Dark
-                 *
-                 * Entire Join is Dark.
-                 */
-
-                doorDarkWallFactor =
-                    max(
-                        doorDarkWallFactor,
-                        topDoorLeftJoin
-                    );
-
-
-                // Right wrap = Light.
-
-                doorLightWallFactor =
-                    max(
-                        doorLightWallFactor,
-                        topDoorRightWrapBody
-                    );
-
-
-                /*
-                 * Right Join:
-                 *
-                 * Top Dark
-                 * Right Wrap Light
-                 */
-
-                float topDoorRightDistanceToTop =
-                    max(
-                        topDistance -
-                        borderEnd,
-                        0.0
-                    );
-
-                float topDoorRightDistanceToSide =
-                    max(
-                        doorMaximum -
-                        cellUV.x,
-                        0.0
-                    );
-
-                float topDoorRightDarkSplit =
-                    step(
-                        topDoorRightDistanceToTop,
-                        topDoorRightDistanceToSide
-                    );
-
-
-                doorDarkWallFactor =
-                    max(
-                        doorDarkWallFactor,
-                        topDoorRightJoin *
-                        topDoorRightDarkSplit
-                    );
-
-                doorLightWallFactor =
-                    max(
-                        doorLightWallFactor,
-                        topDoorRightJoin *
-                        (1.0 - topDoorRightDarkSplit)
-                    );
-
-
-                // =================================================
-                // BOTTOM DOOR
-                // =================================================
-
-                // Left wrap = Dark.
-
-                doorDarkWallFactor =
-                    max(
-                        doorDarkWallFactor,
-                        bottomDoorLeftWrapBody
-                    );
-
-
-                /*
-                 * Left Join:
-                 *
-                 * Left Wrap Dark
-                 * Bottom Light
-                 */
-
-                float bottomDoorLeftDistanceToSide =
-                    max(
-                        cellUV.x -
-                        doorMinimum,
-                        0.0
-                    );
-
-                float bottomDoorLeftDistanceToBottom =
-                    max(
-                        bottomDistance -
-                        borderEnd,
-                        0.0
-                    );
-
-                float bottomDoorLeftDarkSplit =
-                    step(
-                        bottomDoorLeftDistanceToSide,
-                        bottomDoorLeftDistanceToBottom
-                    );
-
-
-                doorDarkWallFactor =
-                    max(
-                        doorDarkWallFactor,
-                        bottomDoorLeftJoin *
-                        bottomDoorLeftDarkSplit
-                    );
-
-                doorLightWallFactor =
-                    max(
-                        doorLightWallFactor,
-                        bottomDoorLeftJoin *
-                        (1.0 - bottomDoorLeftDarkSplit)
-                    );
-
-
-                // Right wrap = Light.
-
-                doorLightWallFactor =
-                    max(
-                        doorLightWallFactor,
-                        bottomDoorRightWrapBody
-                    );
-
-
-                // Right Join = Light + Light.
-
-                doorLightWallFactor =
-                    max(
-                        doorLightWallFactor,
-                        bottomDoorRightJoin
-                    );
-
-
-                // =================================================
-                // LEFT DOOR
-                // =================================================
-
-                // Top wrap = Dark.
-
-                doorDarkWallFactor =
-                    max(
-                        doorDarkWallFactor,
-                        leftDoorTopWrapBody
-                    );
-
-
-                // Top Join = Dark + Dark.
-
-                doorDarkWallFactor =
-                    max(
-                        doorDarkWallFactor,
-                        leftDoorTopJoin
-                    );
-
-
-                // Bottom wrap = Light.
-
-                doorLightWallFactor =
-                    max(
-                        doorLightWallFactor,
-                        leftDoorBottomWrapBody
-                    );
-
-
-                /*
-                 * Bottom Join:
-                 *
-                 * Left Dark
-                 * Bottom Wrap Light
-                 */
-
-                float leftDoorBottomDistanceToLeft =
-                    max(
-                        leftDistance -
-                        borderEnd,
-                        0.0
-                    );
-
-                float leftDoorBottomDistanceToSide =
-                    max(
-                        cellUV.y -
-                        doorMinimum,
-                        0.0
-                    );
-
-                float leftDoorBottomDarkSplit =
-                    step(
-                        leftDoorBottomDistanceToLeft,
-                        leftDoorBottomDistanceToSide
-                    );
-
-
-                doorDarkWallFactor =
-                    max(
-                        doorDarkWallFactor,
-                        leftDoorBottomJoin *
-                        leftDoorBottomDarkSplit
-                    );
-
-                doorLightWallFactor =
-                    max(
-                        doorLightWallFactor,
-                        leftDoorBottomJoin *
-                        (1.0 - leftDoorBottomDarkSplit)
-                    );
-
-
-                // =================================================
-                // RIGHT DOOR
-                // =================================================
-
-                // Bottom wrap = Light.
-
-                doorLightWallFactor =
-                    max(
-                        doorLightWallFactor,
-                        rightDoorBottomWrapBody
-                    );
-
-
-                // Bottom Join = Light + Light.
-
-                doorLightWallFactor =
-                    max(
-                        doorLightWallFactor,
-                        rightDoorBottomJoin
-                    );
-
-
-                // Top wrap = Dark.
-
-                doorDarkWallFactor =
-                    max(
-                        doorDarkWallFactor,
-                        rightDoorTopWrapBody
-                    );
-
-
-                /*
-                 * Top Join:
-                 *
-                 * Top Wrap Dark
-                 * Right Light
-                 */
-
-                float rightDoorTopDistanceToSide =
-                    max(
-                        doorMaximum -
-                        cellUV.y,
-                        0.0
-                    );
-
-                float rightDoorTopDistanceToRight =
-                    max(
-                        rightDistance -
-                        borderEnd,
-                        0.0
-                    );
-
-                float rightDoorTopDarkSplit =
-                    step(
-                        rightDoorTopDistanceToSide,
-                        rightDoorTopDistanceToRight
-                    );
-
-
-                doorDarkWallFactor =
-                    max(
-                        doorDarkWallFactor,
-                        rightDoorTopJoin *
-                        rightDoorTopDarkSplit
-                    );
-
-                doorLightWallFactor =
-                    max(
-                        doorLightWallFactor,
-                        rightDoorTopJoin *
-                        (1.0 - rightDoorTopDarkSplit)
-                    );
-
-
-                // =================================================
-                // Resolve Main Wall
-                // =================================================
-
-                mainDarkWallFactor =
-                    saturate(
-                        mainDarkWallFactor
-                    );
-
-                mainLightWallFactor =
-                    saturate(
-                        mainLightWallFactor *
-                        (1.0 - mainDarkWallFactor)
-                    );
-
-                float mainWallFactor =
-                    saturate(
-                        max(
-                            mainDarkWallFactor,
-                            mainLightWallFactor
-                        )
-                    );
-
-
-                // =================================================
-                // Resolve Door Wall
-                // =================================================
-
-                doorDarkWallFactor =
-                    saturate(
-                        doorDarkWallFactor
-                    );
-
-                doorLightWallFactor =
-                    saturate(
-                        doorLightWallFactor *
-                        (1.0 - doorDarkWallFactor)
-                    );
-
-                float doorWallFactor =
-                    saturate(
-                        max(
-                            doorDarkWallFactor,
-                            doorLightWallFactor
-                        )
-                    );
-
-
-                // =================================================
-                // Room-side Hard Shadow
-                // =================================================
-
-                float leftRoomShadow = CalculateEdgeBand(
-                    leftDistance,
-                    leftEnabled,
-                    wallEnd,
-                    roomShadowWidth,
+                float doorJoinSize = doorWrapWidth;
+
+                float topDoorRightJoinZone = CalculateRangeZone(cellUV.y, 1.0 - wallEnd, 1.0 - wallEnd + doorJoinSize, antiAliasWidth);
+                float topDoorRightLightSplit = CalculateTopLeftLightSplit(
+                    cellUV,
+                    float2(doorMaximum - doorJoinSize, 1.0 - wallEnd),
+                    float2(doorMaximum, 1.0 - wallEnd + doorJoinSize),
                     antiAliasWidth
-                ) * (1.0 - leftDoorOpening);
+                );
+                float2 topDoorRightResult = EvaluateDoorDiagonalEndpoint(topDoorRightWrap, topDoorRightJoinZone, topDoorRightLightSplit, 1.0);
 
-                float rightRoomShadow = CalculateEdgeBand(
-                    rightDistance,
-                    rightEnabled,
-                    wallEnd,
-                    roomShadowWidth,
+                float bottomDoorLeftJoinZone = CalculateRangeZone(cellUV.y, wallEnd - doorJoinSize, wallEnd, antiAliasWidth);
+                float bottomDoorLeftLightSplit = CalculateTopLeftLightSplit(
+                    cellUV,
+                    float2(doorMinimum, wallEnd - doorJoinSize),
+                    float2(doorMinimum + doorJoinSize, wallEnd),
                     antiAliasWidth
-                ) * (1.0 - rightDoorOpening);
+                );
+                float2 bottomDoorLeftResult = EvaluateDoorDiagonalEndpoint(bottomDoorLeftWrap, bottomDoorLeftJoinZone, bottomDoorLeftLightSplit, 0.0);
 
-                float bottomRoomShadow = CalculateEdgeBand(
-                    bottomDistance,
-                    bottomEnabled,
-                    wallEnd,
-                    roomShadowWidth,
+                float leftDoorBottomJoinZone = CalculateRangeZone(cellUV.x, wallEnd - doorJoinSize, wallEnd, antiAliasWidth);
+                float leftDoorBottomLightSplit = CalculateTopLeftLightSplit(
+                    cellUV,
+                    float2(wallEnd - doorJoinSize, doorMinimum),
+                    float2(wallEnd, doorMinimum + doorJoinSize),
                     antiAliasWidth
-                ) * (1.0 - bottomDoorOpening);
+                );
+                float2 leftDoorBottomResult = EvaluateDoorDiagonalEndpoint(leftDoorBottomWrap, leftDoorBottomJoinZone, leftDoorBottomLightSplit, 1.0);
 
-                float topRoomShadow = CalculateEdgeBand(
-                    topDistance,
-                    topEnabled,
-                    wallEnd,
-                    roomShadowWidth,
+                float rightDoorTopJoinZone = CalculateRangeZone(cellUV.x, 1.0 - wallEnd, 1.0 - wallEnd + doorJoinSize, antiAliasWidth);
+                float rightDoorTopLightSplit = CalculateTopLeftLightSplit(
+                    cellUV,
+                    float2(1.0 - wallEnd, doorMaximum - doorJoinSize),
+                    float2(1.0 - wallEnd + doorJoinSize, doorMaximum),
                     antiAliasWidth
-                ) * (1.0 - topDoorOpening);
+                );
+                float2 rightDoorTopResult = EvaluateDoorDiagonalEndpoint(rightDoorTopWrap, rightDoorTopJoinZone, rightDoorTopLightSplit, 0.0);
 
+                float doorDarkWallFactor = max(
+                    max(topDoorLeftWrap, leftDoorTopWrap),
+                    Max4(float4(
+                        topDoorRightResult.x,
+                        bottomDoorLeftResult.x,
+                        leftDoorBottomResult.x,
+                        rightDoorTopResult.x
+                    ))
+                );
 
-                /*
-                 * InnerCorner shadow also stays on the original
-                 * topology logic.
-                 */
+                float doorLightWallFactor = max(
+                    max(bottomDoorRightWrap, rightDoorBottomWrap),
+                    Max4(float4(
+                        topDoorRightResult.y,
+                        bottomDoorLeftResult.y,
+                        leftDoorBottomResult.y,
+                        rightDoorTopResult.y
+                    ))
+                );
 
-                float bottomLeftRoomShadow = CalculateSquareBand(
-                    leftDistance,
-                    bottomDistance,
-                    bottomLeftInner,
+                // =================================================
+                // Resolve Wall Factors
+                // =================================================
+
+                mainDarkWallFactor = saturate(mainDarkWallFactor);
+                mainLightWallFactor = saturate(mainLightWallFactor * (1.0 - mainDarkWallFactor));
+                float mainWallFactor = saturate(max(mainDarkWallFactor, mainLightWallFactor));
+
+                doorDarkWallFactor = saturate(doorDarkWallFactor);
+                doorLightWallFactor = saturate(doorLightWallFactor * (1.0 - doorDarkWallFactor));
+                float doorWallFactor = saturate(max(doorDarkWallFactor, doorLightWallFactor));
+
+                // =================================================
+                // Room Shadow
+                // =================================================
+
+                float4 edgeRoomShadow = CalculateEdgeBand4(edgeDistance, edgeEnabled, wallEnd, roomShadowWidth, antiAliasWidth) * (1.0 - doorOpening);
+                float4 cornerRoomShadow = CalculateCornerBand4(
+                    cornerHorizontalDistance,
+                    cornerVerticalDistance,
+                    cornerEnabled,
                     wallEnd,
                     roomShadowWidth,
                     antiAliasWidth
                 );
 
-                float bottomRightRoomShadow = CalculateSquareBand(
-                    rightDistance,
-                    bottomDistance,
-                    bottomRightInner,
-                    wallEnd,
-                    roomShadowWidth,
-                    antiAliasWidth
-                );
-
-                float topLeftRoomShadow = CalculateSquareBand(
-                    leftDistance,
-                    topDistance,
-                    topLeftInner,
-                    wallEnd,
-                    roomShadowWidth,
-                    antiAliasWidth
-                );
-
-                float topRightRoomShadow = CalculateSquareBand(
-                    rightDistance,
-                    topDistance,
-                    topRightInner,
-                    wallEnd,
-                    roomShadowWidth,
-                    antiAliasWidth
-                );
-
-
-                float roomShadowFactor =
-                    saturate(
-                        max(
-                            max(
-                                max(
-                                    leftRoomShadow,
-                                    rightRoomShadow
-                                ),
-                                max(
-                                    bottomRoomShadow,
-                                    topRoomShadow
-                                )
-                            ),
-                            max(
-                                max(
-                                    bottomLeftRoomShadow,
-                                    bottomRightRoomShadow
-                                ),
-                                max(
-                                    topLeftRoomShadow,
-                                    topRightRoomShadow
-                                )
-                            )
-                        )
-                    );
-
+                float roomShadowFactor = saturate(max(Max4(edgeRoomShadow), Max4(cornerRoomShadow)));
 
                 // =================================================
-                // Colors
+                // Colors and Composition
+                //
+                // All semantic colors are generated on CPU.
+                // Shader only applies geometric coverage.
+                //
+                // Layer priority:
+                // Fill < Main Wall < OuterBorder < DoorWrap
                 // =================================================
 
                 half4 fillColor = input.fillColor;
                 half4 outerBorderColor = input.borderColor;
+                half4 wallDarkColor = input.wallDarkColor;
+                half4 wallLightColor = input.wallLightColor;
 
-                half4 wallBaseColor =
-                    lerp(
-                        outerBorderColor,
-                        fillColor,
-                        _WallColorBlend
-                    );
-
-                half3 wallDarkColor =
-                    lerp(
-                        wallBaseColor.rgb,
-                        _WallDarkColor.rgb,
-                        _WallDarkStrength *
-                        _WallDarkColor.a
-                    );
-
-                half3 wallLightColor =
-                    lerp(
-                        wallBaseColor.rgb,
-                        _WallLightColor.rgb,
-                        _WallLightStrength *
-                        _WallLightColor.a
-                    );
-
-
-                // =================================================
-                // Composition
-                //
-                // Main Wall stays below OuterBorder.
-                //
-                // Only Door Wall renders above OuterBorder, because
-                // it is specifically responsible for wrapping the
-                // cut face of the frame.
-                // =================================================
-
+                // RoomData.RoomColor is passed directly as FillColor.
+                // No color adjustment is applied to the room interior.
                 half4 finalColor = fillColor;
 
+                // =================================================
+                // Main Wall
+                //
+                // Dark / Light colors are already final colors generated
+                // by RoomCellColorFactory in OKLCH space.
+                //
+                // The factors below are only geometric / AA coverage.
+                // =================================================
 
-                // Room shadow.
+                finalColor = lerp(
+                    finalColor,
+                    wallDarkColor,
+                    mainDarkWallFactor
+                );
 
-                finalColor.rgb =
-                    lerp(
-                        finalColor.rgb,
-                        _RoomShadowColor.rgb,
-                        roomShadowFactor *
-                        _RoomShadowStrength *
-                        _RoomShadowColor.a
-                    );
+                finalColor = lerp(
+                    finalColor,
+                    wallLightColor,
+                    mainLightWallFactor
+                );
 
+                // =================================================
+                // Outer Border
+                //
+                // Border overrides normal Wall.
+                // =================================================
 
-                // Main wall base.
+                finalColor = lerp(
+                    finalColor,
+                    outerBorderColor,
+                    outerBorderFactor
+                );
 
-                finalColor =
-                    lerp(
-                        finalColor,
-                        wallBaseColor,
-                        mainWallFactor
-                    );
+                // =================================================
+                // DoorWrap
+                //
+                // DoorWrap overrides OuterBorder.
+                // =================================================
 
+                finalColor = lerp(
+                    finalColor,
+                    wallDarkColor,
+                    doorDarkWallFactor
+                );
 
-                // Main dark surfaces.
+                finalColor = lerp(
+                    finalColor,
+                    wallLightColor,
+                    doorLightWallFactor
+                );
 
-                finalColor.rgb =
-                    lerp(
-                        finalColor.rgb,
-                        wallDarkColor,
-                        mainDarkWallFactor
-                    );
+                // =================================================
+                // Transparent Gap
+                // =================================================
 
-
-                // Main light surfaces.
-
-                finalColor.rgb =
-                    lerp(
-                        finalColor.rgb,
-                        wallLightColor,
-                        mainLightWallFactor
-                    );
-
-
-                // Normal OuterBorder remains above normal Wall.
-
-                finalColor =
-                    lerp(
-                        finalColor,
-                        outerBorderColor,
-                        outerBorderFactor
-                    );
-
-
-                /*
-                 * Door Wall alone renders over OuterBorder.
-                 *
-                 * This allows the Door Wrap to cover the exposed
-                 * cut face without changing the rendering priority
-                 * of every normal Wall.
-                 */
-
-                finalColor =
-                    lerp(
-                        finalColor,
-                        wallBaseColor,
-                        doorWallFactor
-                    );
-
-
-                finalColor.rgb =
-                    lerp(
-                        finalColor.rgb,
-                        wallDarkColor,
-                        doorDarkWallFactor
-                    );
-
-
-                finalColor.rgb =
-                    lerp(
-                        finalColor.rgb,
-                        wallLightColor,
-                        doorLightWallFactor
-                    );
-
-
-                // Transparent Gap remains final.
-
-                finalColor.a *=
-                    1.0 -
-                    gapFactor;
-
+                finalColor.a *= 1.0 - gapFactor;
 
                 return finalColor;
             }

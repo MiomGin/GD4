@@ -25,6 +25,6 @@ MonoBehaviour:
   - {x: 1, y: 2}
   - {x: 2, y: 2}
   mustConnectToExistingRoom: 0
-  roomColor: {r: 0.5995809, g: 0, b: 0.81761, a: 0.39215687}
+  roomColor: {r: 0.40193868, g: 0, b: 0.54088044, a: 1}
   baseTags: 000000000200000003000000
   initialEffects: []
