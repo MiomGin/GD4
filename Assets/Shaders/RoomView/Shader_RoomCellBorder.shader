@@ -27,6 +27,13 @@ Shader "Game/Dungeon/RoomCellBorder"
             Range(0, 0.2)
         ) = 0.02
 
+        // Normalized opening length in the center of a connected edge.
+        // Runtime value is DungeonGrid.DoorSize / DungeonGrid.CellSize.
+        _DoorSize(
+            "Door Opening Size",
+            Range(0, 1)
+        ) = 0
+
         // Enables smooth transitions using screen-space derivatives.
         [Toggle(_ROOM_BORDER_AA_ON)]
         _EnableAA(
@@ -51,6 +58,16 @@ Shader "Game/Dungeon/RoomCellBorder"
         [IntRange]
         _InnerCornerMask(
             "Inner Corner Mask",
+            Range(0, 15)
+        ) = 0
+
+        // Bit 0: Left
+        // Bit 1: Right
+        // Bit 2: Bottom
+        // Bit 3: Top
+        [IntRange]
+        _DoorMask(
+            "Door Mask",
             Range(0, 15)
         ) = 0
     }
@@ -123,6 +140,9 @@ Shader "Game/Dungeon/RoomCellBorder"
 
                 float _BorderMask;
                 float _InnerCornerMask;
+                
+                float _DoorSize;
+                float _DoorMask;
 
             CBUFFER_END
 
@@ -222,6 +242,56 @@ Shader "Game/Dungeon/RoomCellBorder"
                 return saturate(
                     outerZone - innerZone
                 ) * hasBandWidth;
+            }
+
+            /**
+             * Generates a centered opening along one cell edge.
+             *
+             * axisCoordinate:
+             * - Left / Right edges use cellUV.y.
+             * - Bottom / Top edges use cellUV.x.
+             *
+             * The result only masks the solid border.
+             * The transparent gap remains unchanged.
+             */
+            float CalculateCenteredDoorOpening(
+                float axisCoordinate,
+                float enabled,
+                float doorSize,
+                float antiAliasWidth)
+            {
+                float hasDoor =
+                    step(0.00001, doorSize);
+
+                float halfDoorSize =
+                    doorSize * 0.5;
+
+                float distanceToCenter =
+                    abs(axisCoordinate - 0.5);
+
+                float opening;
+
+                #if defined(_ROOM_BORDER_AA_ON)
+
+                    opening =
+                        1.0 -
+                        smoothstep(
+                            halfDoorSize - antiAliasWidth,
+                            halfDoorSize + antiAliasWidth,
+                            distanceToCenter
+                        );
+
+                #else
+
+                    opening =
+                        step(
+                            distanceToCenter,
+                            halfDoorSize
+                        );
+
+                #endif
+
+                return opening * enabled * hasDoor;
             }
 
             /**
@@ -409,6 +479,41 @@ Shader "Game/Dungeon/RoomCellBorder"
                     );
 
                 // -------------------------------------------------
+                // Door masks
+                // -------------------------------------------------
+
+                float doorSize =
+                    clamp(
+                        _DoorSize,
+                        0.0,
+                        0.9999
+                    );
+
+                float leftDoorEnabled =
+                    HasMaskBit(
+                        _DoorMask,
+                        1.0
+                    );
+
+                float rightDoorEnabled =
+                    HasMaskBit(
+                        _DoorMask,
+                        2.0
+                    );
+
+                float bottomDoorEnabled =
+                    HasMaskBit(
+                        _DoorMask,
+                        4.0
+                    );
+
+                float topDoorEnabled =
+                    HasMaskBit(
+                        _DoorMask,
+                        8.0
+                    );
+
+                // -------------------------------------------------
                 // Transparent edge gaps
                 // -------------------------------------------------
 
@@ -495,6 +600,56 @@ Shader "Game/Dungeon/RoomCellBorder"
                         borderWidth,
                         antiAliasWidth
                     );
+
+                // Vertical edges: opening extends along Y.
+                float leftDoorOpening =
+                    CalculateCenteredDoorOpening(
+                        cellUV.y,
+                        leftDoorEnabled,
+                        doorSize,
+                        antiAliasWidth
+                    );
+
+                float rightDoorOpening =
+                    CalculateCenteredDoorOpening(
+                        cellUV.y,
+                        rightDoorEnabled,
+                        doorSize,
+                        antiAliasWidth
+                    );
+
+                // Horizontal edges: opening extends along X.
+                float bottomDoorOpening =
+                    CalculateCenteredDoorOpening(
+                        cellUV.x,
+                        bottomDoorEnabled,
+                        doorSize,
+                        antiAliasWidth
+                    );
+
+                float topDoorOpening =
+                    CalculateCenteredDoorOpening(
+                        cellUV.x,
+                        topDoorEnabled,
+                        doorSize,
+                        antiAliasWidth
+                    );
+
+                /*
+                 * Only remove the solid border.
+                 * leftGap / rightGap / bottomGap / topGap remain unchanged.
+                 */
+                leftBorder *=
+                    1.0 - leftDoorOpening;
+
+                rightBorder *=
+                    1.0 - rightDoorOpening;
+
+                bottomBorder *=
+                    1.0 - bottomDoorOpening;
+
+                topBorder *=
+                    1.0 - topDoorOpening;
 
                 float edgeBorderFactor =
                     max(

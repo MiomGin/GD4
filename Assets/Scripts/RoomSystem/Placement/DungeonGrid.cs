@@ -44,9 +44,10 @@ namespace Dungeon.RoomSystem
     public sealed class DungeonGrid : MonoBehaviour
     {
         [Header("Grid")]
-
         [SerializeField, Min(0.01f)]
         private float cellSize = 1f;
+        [SerializeField, Min(0f)]
+        private float doorSize = 0.4f;
 
         [SerializeField]
         private bool useBounds = true;
@@ -61,11 +62,18 @@ namespace Dungeon.RoomSystem
         private Vector2Int gridSize =
             new Vector2Int(40, 40);
 
-        [Header("Room Visual")]
+        //[Header("Room Visual")]
 
-        [Tooltip("正式房间单个格子的 SpriteRenderer Prefab。")]
-        [SerializeField]
-        private SpriteRenderer placedCellPrefab;
+        //[Tooltip("正式房间单个格子的 SpriteRenderer Prefab。")]
+        //[SerializeField]
+        //private SpriteRenderer placedCellPrefab;
+
+        /// <summary>
+        /// 两个相邻房间连接边中央的门洞长度。
+        /// 使用世界单位，始终限制在 [0, CellSize)。
+        /// </summary>
+        public float DoorSize =>
+            ClampDoorSize(doorSize);
 
         [Tooltip("生成房间根对象的父节点。为空时使用 DungeonGrid 自身。")]
         [SerializeField]
@@ -101,6 +109,21 @@ namespace Dungeon.RoomSystem
         public IReadOnlyCollection<RoomInstance> PlacedRooms =>
             placedRooms;
 
+        /// <summary>
+        /// 当网格占用关系发生变化时触发。
+        /// ChangedCells 表示本次实际发生占用变化的逻辑格。
+        /// 局部变化。
+        /// </summary>
+        public event Action<IReadOnlyList<Vector2Int>>
+            GridChanged;
+
+        /// <summary>
+        /// 全局网格视觉参数发生变化时触发。
+        /// 例如门洞尺寸修改。
+        /// 全局重新刷新。
+        /// </summary>
+        public event Action VisualSettingsChanged;
+
         private void Awake()
         {
             if (roomRoot == null)
@@ -112,6 +135,63 @@ namespace Dungeon.RoomSystem
         private void Start()
         {
             CreateInitialRooms();
+        }
+
+        private void OnValidate()
+        {
+            cellSize = Mathf.Max(
+                0.01f,
+                cellSize
+            );
+
+            doorSize =
+                ClampDoorSize(doorSize);
+
+            //if (Application.isPlaying)
+            //{
+            //    RefreshAllRoomVisuals();
+            //}
+        }
+
+        /// <summary>
+        /// 将门洞大小限制在 [0, CellSize)。
+        /// </summary>
+        private float ClampDoorSize(float value)
+        {
+            float maximumDoorSize =
+                Mathf.Max(
+                    0f,
+                    cellSize - 0.0001f
+                );
+
+            return Mathf.Clamp(
+                value,
+                0f,
+                maximumDoorSize
+            );
+        }
+
+        /// <summary>
+        /// 修改全部房间连接处的门洞大小，并刷新现有房间视觉。
+        /// </summary>
+        /// <param name="newDoorSize">
+        /// 使用世界单位表示的新门洞长度。
+        /// </param>
+        public void SetDoorSize(float newDoorSize)
+        {
+            //doorSize =
+            //    ClampDoorSize(newDoorSize);
+
+            //RefreshAllRoomVisuals();
+
+            float clampedValue = ClampDoorSize(newDoorSize);
+
+            if (Mathf.Approximately(doorSize, clampedValue))
+                return;
+
+            doorSize = clampedValue;
+
+            VisualSettingsChanged?.Invoke();
         }
 
         /// <summary>
@@ -318,15 +398,15 @@ namespace Dungeon.RoomSystem
         {
             roomInstance = null;
 
-            if (placedCellPrefab == null)
-            {
-                Debug.LogError(
-                    "DungeonGrid 的 Placed Cell Prefab 未设置。",
-                    this
-                );
+            //if (placedCellPrefab == null)
+            //{
+            //    Debug.LogError(
+            //        "DungeonGrid 的 Placed Cell Prefab 未设置。",
+            //        this
+            //    );
 
-                return false;
-            }
+            //    return false;
+            //}
 
             List<Vector2Int> worldCells =
                 new List<Vector2Int>();
@@ -352,8 +432,8 @@ namespace Dungeon.RoomSystem
             RoomInstance runtime =
                 roomObject.AddComponent<RoomInstance>();
 
-            RoomVisualController visual =
-                roomObject.AddComponent<RoomVisualController>();
+            //RoomVisualController visual =
+            //    roomObject.AddComponent<RoomVisualController>();
 
             try
             {
@@ -365,17 +445,28 @@ namespace Dungeon.RoomSystem
                     this
                 );
 
-                visual.Initialize(
-                    roomData,
-                    worldCells,
-                    this,
-                    placedCellPrefab
-                );
+                //visual.Initialize(
+                //    roomData,
+                //    worldCells,
+                //    this,
+                //    placedCellPrefab
+                //);
 
                 RegisterRoom(
                     runtime,
                     worldCells
                 );
+
+                NotifyGridChanged(worldCells);
+
+                /*
+                 * 房间注册完成后刷新新房间及其相邻房间。
+                 * 这样连接边两侧都会生成对称门洞。
+                 */
+
+                //RefreshRoomVisualsAround(
+                //    worldCells
+                //);
 
                 /*
                  * NotifyPlaced 放在网格注册之后。
@@ -467,8 +558,10 @@ namespace Dungeon.RoomSystem
 
         /// <summary>
         /// 从网格中删除一个已经放置的房间。
+        /// 删除后会刷新相邻房间的描边与门洞。
         /// </summary>
-        public bool RemoveRoom(RoomInstance roomInstance)
+        public bool RemoveRoom(
+            RoomInstance roomInstance)
         {
             if (roomInstance == null ||
                 !placedRooms.Contains(roomInstance))
@@ -476,12 +569,27 @@ namespace Dungeon.RoomSystem
                 return false;
             }
 
+            /*
+             * RoomInstance 销毁前仍可安全读取 OccupiedCells。
+             */
+            IReadOnlyList<Vector2Int> removedCells =
+                roomInstance.OccupiedCells;
+
             roomInstance.PrepareForRemoval();
 
             UnregisterRoom(
                 roomInstance,
-                roomInstance.OccupiedCells
+                removedCells
             );
+
+            /*
+             * 房间注销后，相邻房间原本的门洞应恢复为完整外墙。
+             */
+            //RefreshRoomVisualsAround(
+            //    removedCells
+            //)
+
+            NotifyGridChanged(removedCells);
 
             Destroy(roomInstance.gameObject);
 
@@ -590,6 +698,118 @@ namespace Dungeon.RoomSystem
                 {
                     occupiedRooms.Remove(cell);
                 }
+            }
+        }
+
+        /// <summary>
+        /// 通知外部系统指定格子的占用状态发生变化。
+        /// DungeonGrid 只负责发布逻辑变化，不直接处理视觉刷新。
+        /// </summary>
+        private void NotifyGridChanged(
+            IReadOnlyList<Vector2Int> changedCells)
+        {
+            if (changedCells == null ||
+                changedCells.Count == 0)
+            {
+                return;
+            }
+
+            GridChanged?.Invoke(changedCells);
+        }
+
+        /// <summary>
+        /// 刷新指定变化区域内的房间及其四方向相邻房间。
+        /// 用于房间新增、删除后更新连接门洞。
+        /// 暂弃用。
+        /// </summary>
+        private void RefreshRoomVisualsAround(
+            IReadOnlyList<Vector2Int> changedCells)
+        {
+            if (changedCells == null)
+            {
+                return;
+            }
+
+            HashSet<RoomInstance> affectedRooms =
+                new HashSet<RoomInstance>();
+
+            foreach (Vector2Int cell in changedCells)
+            {
+                AddRoomAtCell(
+                    cell,
+                    affectedRooms
+                );
+
+                AddRoomAtCell(
+                    cell + Vector2Int.left,
+                    affectedRooms
+                );
+
+                AddRoomAtCell(
+                    cell + Vector2Int.right,
+                    affectedRooms
+                );
+
+                AddRoomAtCell(
+                    cell + Vector2Int.down,
+                    affectedRooms
+                );
+
+                AddRoomAtCell(
+                    cell + Vector2Int.up,
+                    affectedRooms
+                );
+            }
+
+            foreach (RoomInstance room
+                     in affectedRooms)
+            {
+                if (room == null)
+                {
+                    continue;
+                }
+
+                RoomVisualController visual =
+                    room.GetComponent<RoomVisualController>();
+
+                visual?.RefreshBorders();
+            }
+        }
+
+        /// <summary>
+        /// 将指定格子所属房间加入待刷新集合。
+        /// 暂弃用。
+        /// </summary>
+        private void AddRoomAtCell(
+            Vector2Int cell,
+            HashSet<RoomInstance> rooms)
+        {
+            if (occupiedRooms.TryGetValue(
+                    cell,
+                    out RoomInstance room) &&
+                room != null)
+            {
+                rooms.Add(room);
+            }
+        }
+
+        /// <summary>
+        /// 刷新当前网格中全部房间的描边和门洞。
+        /// 暂弃用。
+        /// </summary>
+        private void RefreshAllRoomVisuals()
+        {
+            foreach (RoomInstance room in placedRooms)
+            {
+                if (room == null)
+                {
+                    continue;
+                }
+
+                RoomVisualController visual =
+                    room.GetComponent<RoomVisualController>();
+
+                visual?.RefreshBorders();
             }
         }
 

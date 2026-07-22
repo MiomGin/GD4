@@ -16,7 +16,7 @@ MonoBehaviour:
   displayName: Entrance
   occupiedCells:
   - {x: 0, y: 0}
-  mustConnectToExistingRoom: 1
-  roomColor: {r: 1, g: 1, b: 1, a: 0.39215687}
+  mustConnectToExistingRoom: 0
+  roomColor: {r: 0, g: 0.6855345, b: 0.024925234, a: 0.39215687}
   baseTags: 000000000100000003000000
   initialEffects: []

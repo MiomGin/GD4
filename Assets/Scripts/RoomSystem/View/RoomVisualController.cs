@@ -126,15 +126,32 @@ namespace Dungeon.RoomSystem
         }
 
         /// <summary>
-        /// 根据房间占用格重新计算全部格子的外露边和凹角。
-        /// 同一房间内部的相邻边不会显示描边。
+        /// 根据当前房间和网格状态重新计算全部格子的外露边、
+        /// 凹角连接区域以及房间连接门洞。
         /// </summary>
         public void RefreshBorders()
         {
+            if (dungeonGrid == null)
+            {
+                return;
+            }
+
             HashSet<Vector2Int> roomCellSet =
                 new HashSet<Vector2Int>(
                     occupiedCells
                 );
+
+            float normalizedDoorSize = 0f;
+
+            if (dungeonGrid.CellSize >
+                Mathf.Epsilon)
+            {
+                normalizedDoorSize =
+                    Mathf.Clamp01(
+                        dungeonGrid.DoorSize /
+                        dungeonGrid.CellSize
+                    );
+            }
 
             foreach (RoomCellView cellView in cellViews)
             {
@@ -156,9 +173,21 @@ namespace Dungeon.RoomSystem
                             roomCellSet
                         );
 
+                RoomDoorMask doorMask =
+                    RoomBorderUtility.CalculateDoorMask(
+                        cellView.Cell,
+                        roomCellSet,
+                        dungeonGrid
+                    );
+
                 cellView.SetBorderMasks(
                     borderMask,
                     innerCornerMask
+                );
+
+                cellView.SetDoorData(
+                    doorMask,
+                    normalizedDoorSize
                 );
             }
         }

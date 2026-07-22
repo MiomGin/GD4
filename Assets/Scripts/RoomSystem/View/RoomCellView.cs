@@ -26,6 +26,12 @@ namespace Dungeon.RoomSystem
         private static readonly int InnerCornerMaskId =
             Shader.PropertyToID("_InnerCornerMask");
 
+        private static readonly int DoorMaskId =
+            Shader.PropertyToID("_DoorMask");
+
+        private static readonly int DoorSizeId =
+            Shader.PropertyToID("_DoorSize");
+
         private SpriteRenderer spriteRenderer;
         private MaterialPropertyBlock propertyBlock;
 
@@ -212,6 +218,42 @@ namespace Dungeon.RoomSystem
             propertyBlock.SetFloat(
                 InnerCornerMaskId,
                 (int)innerCornerMask
+            );
+
+            spriteRenderer.SetPropertyBlock(
+                propertyBlock
+            );
+        }
+
+        /// <summary>
+        /// 设置当前格子的门洞方向和门洞大小。
+        /// </summary>
+        /// <param name="doorMask">
+        /// 与其他房间相邻、需要显示门洞的方向。
+        /// </param>
+        /// <param name="normalizedDoorSize">
+        /// 相对于 CellSize 的归一化门洞长度，范围为 0～1。
+        /// </param>
+        public void SetDoorData(
+            RoomDoorMask doorMask,
+            float normalizedDoorSize)
+        {
+            CacheComponents();
+
+            spriteRenderer.GetPropertyBlock(
+                propertyBlock
+            );
+
+            propertyBlock.SetFloat(
+                DoorMaskId,
+                (int)doorMask
+            );
+
+            propertyBlock.SetFloat(
+                DoorSizeId,
+                Mathf.Clamp01(
+                    normalizedDoorSize
+                )
             );
 
             spriteRenderer.SetPropertyBlock(

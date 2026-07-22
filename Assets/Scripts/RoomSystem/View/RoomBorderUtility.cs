@@ -33,6 +33,23 @@ namespace Dungeon.RoomSystem
     }
 
     /// <summary>
+    /// 单个格子四方向上需要生成门洞的连接边。
+    /// 只有相邻格属于另一个房间时，对应方向才会启用。
+    /// </summary>
+    [Flags]
+    public enum RoomDoorMask
+    {
+        None = 0,
+
+        Left = 1 << 0,
+        Right = 1 << 1,
+        Bottom = 1 << 2,
+        Top = 1 << 3,
+
+        All = Left | Right | Bottom | Top
+    }
+
+    /// <summary>
     /// 计算房间格子的外露边和凹角连接区域。
     /// </summary>
     public static class RoomBorderUtility
@@ -136,6 +153,87 @@ namespace Dungeon.RoomSystem
             }
 
             return mask;
+        }
+
+        /// <summary>
+        /// 计算当前格子哪些外侧边连接了另一个房间。
+        ///
+        /// 同一房间内部相邻边不生成门洞；
+        /// 相邻格为空时也不生成门洞；
+        /// 只有相邻格被其他房间占用时生成门洞。
+        /// </summary>
+        /// <param name="cell">当前世界逻辑格。</param>
+        /// <param name="roomCells">当前房间占用的全部逻辑格。</param>
+        /// <param name="dungeonGrid">所属地牢网格。</param>
+        public static RoomDoorMask CalculateDoorMask(
+            Vector2Int cell,
+            HashSet<Vector2Int> roomCells,
+            DungeonGrid dungeonGrid)
+        {
+            if (roomCells == null ||
+                dungeonGrid == null)
+            {
+                return RoomDoorMask.None;
+            }
+
+            RoomDoorMask mask =
+                RoomDoorMask.None;
+
+            if (HasOtherRoom(
+                    cell + Vector2Int.left,
+                    roomCells,
+                    dungeonGrid))
+            {
+                mask |= RoomDoorMask.Left;
+            }
+
+            if (HasOtherRoom(
+                    cell + Vector2Int.right,
+                    roomCells,
+                    dungeonGrid))
+            {
+                mask |= RoomDoorMask.Right;
+            }
+
+            if (HasOtherRoom(
+                    cell + Vector2Int.down,
+                    roomCells,
+                    dungeonGrid))
+            {
+                mask |= RoomDoorMask.Bottom;
+            }
+
+            if (HasOtherRoom(
+                    cell + Vector2Int.up,
+                    roomCells,
+                    dungeonGrid))
+            {
+                mask |= RoomDoorMask.Top;
+            }
+
+            return mask;
+        }
+
+        /// <summary>
+        /// 判断指定格是否被当前房间以外的房间占用。
+        /// </summary>
+        private static bool HasOtherRoom(
+            Vector2Int neighborCell,
+            HashSet<Vector2Int> roomCells,
+            DungeonGrid dungeonGrid)
+        {
+            /*
+             * 属于当前房间时是内部连接，
+             * 当前内部边本来就完全不绘制。
+             */
+            if (roomCells.Contains(neighborCell))
+            {
+                return false;
+            }
+
+            return dungeonGrid.IsCellOccupied(
+                neighborCell
+            );
         }
     }
 }
